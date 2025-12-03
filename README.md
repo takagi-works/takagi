@@ -481,6 +481,35 @@ coap-client -m post coap://localhost:5683/sensor -e '{"value":42}'
 
 Takagi includes an extensible registry system for protocol constants, providing a plugin-friendly architecture where custom methods, response codes, options, and content formats can be registered.
 
+## Plugin System
+
+Takagi ships with an EventBus-backed plugin manager for runtime extensions and future clustering.
+
+- **Auto-discovery**: Finds plugins under `Takagi::Plugins::*` and `takagi-plugin-*` gems (configurable via `plugins.auto_discover`).
+- **Config + DSL**: Declare in code (`plugin MyPlugin, opt: 1`) or YAML:
+  ```yaml
+  plugins:
+    auto_discover: true
+    enabled:
+      - name: request_logging
+        options:
+          sample_rate: 0.1
+      - prometheus
+  ```
+- **Lifecycle hooks**: Plugins may implement `before_apply/apply/after_apply` (plus `before_unload/shutdown`). Events publish to `hooks.plugin_*` on the EventBus.
+- **Deps & versions**: `metadata` supports `dependencies:` and `requires:`; dependencies auto-enable first and versions are checked.
+- **Config schema**: Optional `config_schema` validates types/enums/ranges and fills defaults before apply.
+- **Hooked internals**: Core emits `hooks.*` for registry changes, route additions, middleware before/after, server start/stop, Observe subscribe/notify—ready for observability across nodes.
+
+Quick start:
+```ruby
+class MyApp < Takagi::Base
+  plugin Takagi::Plugins::RequestLogging, sample_rate: 0.2
+end
+
+MyApp.run! # enables plugins from DSL + config
+```
+
 ### **Using Protocol Constants**
 
 All CoAP constants are organized into registries that follow RFC specifications:

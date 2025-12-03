@@ -8,6 +8,8 @@ require_relative 'server_registry'
 require_relative 'network/registry'
 require_relative 'network/udp'
 require_relative 'network/tcp'
+require_relative 'plugin'
+require_relative 'base/plugin_management'
 
 module Takagi
   # Base class that every Takagi based app should use.
@@ -36,6 +38,7 @@ module Takagi
     extend ServerLifecycle
     extend MiddlewareManagement
     extend ReactorManagement
+    extend PluginManagement
 
     # Returns the global router instance
     #

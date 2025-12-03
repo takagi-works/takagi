@@ -23,6 +23,7 @@ module Takagi
       end
 
       def run!
+        Takagi::Hooks.emit(:server_starting, protocol: :tcp, port: @port)
         @logger.info "Starting Takagi TCP server on port #{@port}"
         @workers = []
         @watcher.start
@@ -59,6 +60,7 @@ module Takagi
         shutdown! if @shutdown_requested
 
         @logger.info "TCP server stopped"
+        Takagi::Hooks.emit(:server_stopped, protocol: :tcp, port: @port)
       end
 
       def shutdown!

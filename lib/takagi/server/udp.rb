@@ -28,6 +28,7 @@ module Takagi
 
       # Starts the server with multiple worker processes
       def run!
+        Takagi::Hooks.emit(:server_starting, protocol: :udp, port: @port)
         log_boot_details
         spawn_workers
         Takagi::Observable::Registry.start_all
@@ -62,6 +63,7 @@ module Takagi
         end
 
         exit(0) unless test_environment?
+        Takagi::Hooks.emit(:server_stopped, protocol: :udp, port: @port)
       end
 
       private

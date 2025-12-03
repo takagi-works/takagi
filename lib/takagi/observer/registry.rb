@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative '../hooks'
+
 module Takagi
   module Observer
     # Keeps track of observers and broadcasts state changes to interested parties.
@@ -28,6 +30,8 @@ module Takagi
             @subscriptions[path] << entry
           end
 
+          Takagi::Hooks.emit(:observe_subscribed, path: path, subscription: entry)
+
           entry
         end
 
@@ -37,6 +41,8 @@ module Takagi
 
             @subscriptions[path].reject! { |s| s[:token] == token }
           end
+
+          Takagi::Hooks.emit(:observe_unsubscribed, path: path, token: token)
         end
 
         def notify(path, new_value)
@@ -47,6 +53,8 @@ module Takagi
           Takagi.logger.debug "Notify called for: #{path}"
           Takagi.logger.debug "Subscriptions count: #{subscribers.size}"
 
+          Takagi::Hooks.emit(:observe_notify_start, path: path, subscribers: subscribers&.size || 0, value: new_value)
+
           subscribers.each do |subscription|
             next unless should_notify?(subscription, new_value)
 
@@ -54,6 +62,8 @@ module Takagi
             update_sequence(subscription, new_value)
             subscription[:last_notified_at] = Time.now
           end
+
+          Takagi::Hooks.emit(:observe_notify_end, path: path, delivered: subscribers&.size || 0, value: new_value)
         end
 
         def sender

@@ -5,6 +5,7 @@ require_relative 'core/attribute_set'
 require_relative 'helpers'
 require_relative 'router/route_matcher'
 require_relative 'router/metadata_extractor'
+require_relative 'hooks'
 
 module Takagi
   class Router
@@ -151,6 +152,13 @@ module Takagi
 
         # Extract metadata from core blocks inside the handler
         extract_metadata_from_handler(entry) if block
+
+        Takagi::Hooks.emit(
+          :router_route_added,
+          method: method,
+          path: path,
+          entry: entry
+        )
       end
     end
 

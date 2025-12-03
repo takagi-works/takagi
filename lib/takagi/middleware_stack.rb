@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'singleton'
+require_relative 'hooks'
 
 module Takagi
   # Middleware stack for processing CoAP requests
@@ -67,6 +68,7 @@ module Takagi
     def call(request)
       # Lazily load configuration on first request
       load_from_config unless @config_loaded
+      Takagi::Hooks.emit(:middleware_before_call, request: request)
 
       # Define the core application logic (routing)
       app = lambda do |req|
@@ -79,9 +81,12 @@ module Takagi
       end
 
       # Build middleware chain (reverse order for proper execution)
-      @middlewares.reverse.reduce(app) do |next_middleware, middleware|
+      response = @middlewares.reverse.reduce(app) do |next_middleware, middleware|
         ->(req) { middleware.call(req, &next_middleware) }
       end.call(request)
+
+      Takagi::Hooks.emit(:middleware_after_call, request: request, response: response)
+      response
     end
 
     # Clear all middleware (useful for testing)

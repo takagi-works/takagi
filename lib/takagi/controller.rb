@@ -2,6 +2,7 @@
 
 require_relative 'controller/thread_pool'
 require_relative 'controller/resource_allocator'
+require_relative 'hooks'
 
 module Takagi
   # Base class for modular controllers with isolated routers
@@ -190,6 +191,7 @@ module Takagi
 
         @thread_pool = ThreadPool.new(size: threads, name: name)
         Takagi.logger.info "Started worker pool for #{name} with #{threads} threads"
+        Takagi::Hooks.emit(:controller_workers_started, controller: self, name: name, threads: threads)
         @thread_pool
       end
 
@@ -198,6 +200,7 @@ module Takagi
         return unless @thread_pool
 
         Takagi.logger.info "Shutting down worker pool for #{name}"
+        Takagi::Hooks.emit(:controller_workers_stopped, controller: self)
         @thread_pool.shutdown
         @thread_pool = nil
       end
