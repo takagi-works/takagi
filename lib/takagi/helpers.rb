@@ -3,7 +3,7 @@
 module Takagi
   # Helper methods for route handlers to improve DX
   #
-  # Dynamically generates response helper methods from CoAP::Response registry:
+  # Dynamically generates response helper methods from CoAP::Registries::Response registry:
   # - Success methods (2.xx): created(data = {}), changed(data = {}), etc.
   # - Error methods (4.xx, 5.xx): bad_request(message = ...), not_found(message = ...), etc.
   #
@@ -20,9 +20,9 @@ module Takagi
     # @return [Takagi::Message::Outbound] The response with JSON content-format
     def json(data = {})
       request.to_response(
-        CoAP::Response.value_for(:content),
+        CoAP::Registries::Response.value_for(:content),
         data,
-        options: { CoAP::Option::CONTENT_FORMAT => [Takagi::Router::DEFAULT_CONTENT_FORMAT] }
+        options: { CoAP::Registries::Option::CONTENT_FORMAT => [Takagi::Router::DEFAULT_CONTENT_FORMAT] }
       )
     end
 
@@ -43,11 +43,11 @@ module Takagi
       throw :halt, response
     end
 
-    # Dynamically generate helper methods from CoAP::Response registry
+    # Dynamically generate helper methods from CoAP::Registries::Response registry
     # Iterate through all registered response codes
-    CoAP::Response.each_value do |code_number|
-      code_string = CoAP::Response.name_for(code_number)
-      metadata = CoAP::Response.metadata_for(code_number)
+    CoAP::Registries::Response.each_value do |code_number|
+      code_string = CoAP::Registries::Response.name_for(code_number)
+      metadata = CoAP::Registries::Response.metadata_for(code_number)
       next unless metadata
 
       symbol = metadata[:symbol]
@@ -56,11 +56,11 @@ module Takagi
       method_name = symbol.to_s
 
       # Determine if this is a success (2.xx) or error (4.xx, 5.xx) response
-      if CoAP::Response.success?(code_number)
+      if CoAP::Registries::Response.success?(code_number)
         # Success methods take optional data hash
         define_method(method_name) do |data = {}, options = {}|
-          options[CoAP::Option::CONTENT_FORMAT] ||= request.content_format
-          options[CoAP::Option::CONTENT_FORMAT] ||= Takagi::Router::DEFAULT_CONTENT_FORMAT
+          options[CoAP::Registries::Option::CONTENT_FORMAT] ||= request.content_format
+          options[CoAP::Registries::Option::CONTENT_FORMAT] ||= Takagi::Router::DEFAULT_CONTENT_FORMAT
           request.to_response(code_string, data, options: options)
         end
       else

@@ -6,11 +6,11 @@ module Takagi
   # modifying core code.
   #
   # @example Registering a custom response code
-  #   Takagi::CoAP::Response.register(231, '7.01 Custom Code', :custom_code)
+  #   Takagi::CoAP::Registries::Response.register(231, '7.01 Custom Code', :custom_code)
   #
   # @example Using registered constants
-  #   code = Takagi::CoAP::Response::CONTENT  # => 69
-  #   Takagi::CoAP::Response.name_for(69)      # => "2.05 Content"
+  #   code = Takagi::CoAP::Registries::Response::CONTENT  # => 69
+  #   Takagi::CoAP::Registries::Response.name_for(69)     # => "2.05 Content"
   module CoAP
     # Default CoAP port (RFC 7252 §6.1)
     DEFAULT_PORT: 5683

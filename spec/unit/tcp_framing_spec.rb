@@ -43,10 +43,10 @@ RSpec.describe Takagi::Server::Tcp do
 
     it 'encodes extended length messages without truncation' do
       outbound = Takagi::Message::Outbound.new(
-        code: Takagi::CoAP::Response::CONTENT,
+        code: Takagi::CoAP::Registries::Response::CONTENT,
         payload: { temperature: 21 },
         token: "\x01\x02",
-        options: { Takagi::CoAP::Option::CONTENT_FORMAT => Takagi::Router::DEFAULT_CONTENT_FORMAT },
+        options: { Takagi::CoAP::Registries::Option::CONTENT_FORMAT => Takagi::Router::DEFAULT_CONTENT_FORMAT },
         transport: :tcp
       )
 
@@ -92,7 +92,7 @@ RSpec.describe Takagi::Server::Tcp do
 
       inbound = server.send(:read_request, socket)
 
-      expect(inbound.code).to eq(Takagi::CoAP::Signaling::CSM)
+      expect(inbound.code).to eq(Takagi::CoAP::Registries::Signaling::CSM)
       expect(inbound.token).to eq(''.b)
       expect(inbound.options.keys).to include(2, 4)
     end

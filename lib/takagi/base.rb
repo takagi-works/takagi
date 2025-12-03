@@ -45,8 +45,8 @@ module Takagi
     end
 
     # Dynamically delegate route registration methods to router
-    # Generates: get, post, put, delete, fetch, etc. from CoAP::Method registry
-    CoAP::Method.all.each_value do |method_name|
+    # Generates: get, post, put, delete, fetch, etc. from CoAP::Registries::Method registry
+    CoAP::Registries::Method.all.each_value do |method_name|
       method_string = method_name.split.first
       method_symbol = method_string.downcase.to_sym
 
@@ -81,7 +81,7 @@ module Takagi
       req.to_response(
         '2.05 Content',
         payload,
-        options: { CoAP::Option::CONTENT_FORMAT => Takagi::Discovery::CoreLinkFormat::CONTENT_FORMAT }
+        options: { CoAP::Registries::Option::CONTENT_FORMAT => Takagi::Discovery::CoreLinkFormat::CONTENT_FORMAT }
       )
     end
 

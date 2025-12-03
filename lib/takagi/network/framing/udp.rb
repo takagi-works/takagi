@@ -28,7 +28,7 @@ module Takagi
 
           def build_header(message)
             version = Takagi::CoAP::VERSION
-            type = message.type || CoAP::MessageType::ACK
+            type = message.type || CoAP::Registries::MessageType::ACK
             token_length = message.token.bytesize
             version_type_token_length = (version << 6) | (type << 4) | token_length
             [version_type_token_length, message.code, message.message_id].pack('CCn')

@@ -20,7 +20,7 @@ module Takagi
 
       def to_bytes
         version = Takagi::CoAP::VERSION
-        type = CoAP::MessageType::CON # Confirmable
+        type = CoAP::Registries::MessageType::CON # Confirmable
         token_length = @token.bytesize
         # Use CoAP registry to convert method to code
         code = CoAP::CodeHelpers.to_numeric(@method)
@@ -51,14 +51,14 @@ module Takagi
 
         # Observe option must be first for correct delta encoding
         unless @observe.nil?
-          encoded << encode_option(CoAP::Option::OBSERVE, [@observe].pack('C'), last_option_number)
-          last_option_number = CoAP::Option::OBSERVE
+          encoded << encode_option(CoAP::Registries::Option::OBSERVE, [@observe].pack('C'), last_option_number)
+          last_option_number = CoAP::Registries::Option::OBSERVE
         end
 
         # Encode URI path segments
         @uri.path.split('/').reject(&:empty?).each do |segment|
-          encoded << encode_option(CoAP::Option::URI_PATH, segment, last_option_number)
-          last_option_number = CoAP::Option::URI_PATH
+          encoded << encode_option(CoAP::Registries::Option::URI_PATH, segment, last_option_number)
+          last_option_number = CoAP::Registries::Option::URI_PATH
         end
 
         encoded.join.b

@@ -44,119 +44,119 @@ module Takagi
       # Get the numeric code class (2 = Success, 4 = Client Error, 5 = Server Error)
       # @return [Integer] Code class
       def code_class
-        CoAP::Response.class_for(@code)
+        CoAP::Registries::Response.class_for(@code)
       end
 
       # Check if response is successful (2.xx)
       # @return [Boolean]
       def success?
-        CoAP::Response.success?(@code)
+        CoAP::Registries::Response.success?(@code)
       end
 
       # Check if response is a client error (4.xx)
       # @return [Boolean]
       def client_error?
-        CoAP::Response.client_error?(@code)
+        CoAP::Registries::Response.client_error?(@code)
       end
 
       # Check if response is a server error (5.xx)
       # @return [Boolean]
       def server_error?
-        CoAP::Response.server_error?(@code)
+        CoAP::Registries::Response.server_error?(@code)
       end
 
       # Check if response has an error (4.xx or 5.xx)
       # @return [Boolean]
       def error?
-        CoAP::Response.error?(@code)
+        CoAP::Registries::Response.error?(@code)
       end
 
       # Common 2.xx success codes (using registry)
       def created?
-        @code == CoAP::Response::CREATED
+        @code == CoAP::Registries::Response::CREATED
       end
 
       def deleted?
-        @code == CoAP::Response::DELETED
+        @code == CoAP::Registries::Response::DELETED
       end
 
       def valid?
-        @code == CoAP::Response::VALID
+        @code == CoAP::Registries::Response::VALID
       end
 
       def changed?
-        @code == CoAP::Response::CHANGED
+        @code == CoAP::Registries::Response::CHANGED
       end
 
       def content?
-        @code == CoAP::Response::CONTENT
+        @code == CoAP::Registries::Response::CONTENT
       end
       alias ok? content?
 
       # Common 4.xx client error codes (using registry)
       def bad_request?
-        @code == CoAP::Response::BAD_REQUEST
+        @code == CoAP::Registries::Response::BAD_REQUEST
       end
 
       def unauthorized?
-        @code == CoAP::Response::UNAUTHORIZED
+        @code == CoAP::Registries::Response::UNAUTHORIZED
       end
 
       def bad_option?
-        @code == CoAP::Response::BAD_OPTION
+        @code == CoAP::Registries::Response::BAD_OPTION
       end
 
       def forbidden?
-        @code == CoAP::Response::FORBIDDEN
+        @code == CoAP::Registries::Response::FORBIDDEN
       end
 
       def not_found?
-        @code == CoAP::Response::NOT_FOUND
+        @code == CoAP::Registries::Response::NOT_FOUND
       end
 
       def method_not_allowed?
-        @code == CoAP::Response::METHOD_NOT_ALLOWED
+        @code == CoAP::Registries::Response::METHOD_NOT_ALLOWED
       end
 
       def not_acceptable?
-        @code == CoAP::Response::NOT_ACCEPTABLE
+        @code == CoAP::Registries::Response::NOT_ACCEPTABLE
       end
 
       def precondition_failed?
-        @code == CoAP::Response::PRECONDITION_FAILED
+        @code == CoAP::Registries::Response::PRECONDITION_FAILED
       end
 
       def request_entity_too_large?
-        @code == CoAP::Response::REQUEST_ENTITY_TOO_LARGE
+        @code == CoAP::Registries::Response::REQUEST_ENTITY_TOO_LARGE
       end
 
       def unsupported_content_format?
-        @code == CoAP::Response::UNSUPPORTED_CONTENT_FORMAT
+        @code == CoAP::Registries::Response::UNSUPPORTED_CONTENT_FORMAT
       end
 
       # Common 5.xx server error codes (using registry)
       def internal_server_error?
-        @code == CoAP::Response::INTERNAL_SERVER_ERROR
+        @code == CoAP::Registries::Response::INTERNAL_SERVER_ERROR
       end
 
       def not_implemented?
-        @code == CoAP::Response::NOT_IMPLEMENTED
+        @code == CoAP::Registries::Response::NOT_IMPLEMENTED
       end
 
       def bad_gateway?
-        @code == CoAP::Response::BAD_GATEWAY
+        @code == CoAP::Registries::Response::BAD_GATEWAY
       end
 
       def service_unavailable?
-        @code == CoAP::Response::SERVICE_UNAVAILABLE
+        @code == CoAP::Registries::Response::SERVICE_UNAVAILABLE
       end
 
       def gateway_timeout?
-        @code == CoAP::Response::GATEWAY_TIMEOUT
+        @code == CoAP::Registries::Response::GATEWAY_TIMEOUT
       end
 
       def proxying_not_supported?
-        @code == CoAP::Response::PROXYING_NOT_SUPPORTED
+        @code == CoAP::Registries::Response::PROXYING_NOT_SUPPORTED
       end
 
       # Deserialize payload using content-format
@@ -191,7 +191,7 @@ module Takagi
       # Check if response has JSON content-format
       # @return [Boolean]
       def json?
-        content_format == CoAP::ContentFormat::JSON
+        content_format == CoAP::Registries::ContentFormat::JSON
       end
 
       # Get content-format option value
@@ -199,7 +199,7 @@ module Takagi
       def content_format
         return nil unless @options
 
-        value = @options[CoAP::Option::CONTENT_FORMAT]
+        value = @options[CoAP::Registries::Option::CONTENT_FORMAT]
         return nil if value.nil?
 
         # Handle both array and non-array values

@@ -487,20 +487,20 @@ All CoAP constants are organized into registries that follow RFC specifications:
 
 ```ruby
 # Method codes (RFC 7252 §12.1.1)
-Takagi::CoAP::Method::GET     # => 1
-Takagi::CoAP::Method::POST    # => 2
+Takagi::CoAP::Registries::Method::GET     # => 1
+Takagi::CoAP::Registries::Method::POST    # => 2
 
 # Response codes (RFC 7252 §12.1.2)
-Takagi::CoAP::Response::CONTENT     # => 69 (2.05)
-Takagi::CoAP::Response::NOT_FOUND   # => 132 (4.04)
+Takagi::CoAP::Registries::Response::CONTENT     # => 69 (2.05)
+Takagi::CoAP::Registries::Response::NOT_FOUND   # => 132 (4.04)
 
 # Options (RFC 7252 §5.10)
-Takagi::CoAP::Option::URI_PATH         # => 11
-Takagi::CoAP::Option::CONTENT_FORMAT   # => 12
+Takagi::CoAP::Registries::Option::URI_PATH         # => 11
+Takagi::CoAP::Registries::Option::CONTENT_FORMAT   # => 12
 
 # Content formats (RFC 7252 §12.3)
-Takagi::CoAP::ContentFormat::JSON        # => 50
-Takagi::CoAP::ContentFormat::TEXT_PLAIN  # => 0
+Takagi::CoAP::Registries::ContentFormat::JSON        # => 50
+Takagi::CoAP::Registries::ContentFormat::TEXT_PLAIN  # => 0
 ```
 
 ### **Code Conversion Helpers**
@@ -517,8 +517,8 @@ Takagi::CoAP::CodeHelpers.to_numeric(:get)       # => 1
 Takagi::CoAP::CodeHelpers.to_numeric("2.05")     # => 69
 
 # Status checking
-Takagi::CoAP::Response.success?(69)        # => true (2.xx)
-Takagi::CoAP::Response.client_error?(132)  # => true (4.xx)
+Takagi::CoAP::Registries::Response.success?(69)        # => true (2.xx)
+Takagi::CoAP::Registries::Response.client_error?(132)  # => true (4.xx)
 ```
 
 ### **Plugin Development**
@@ -527,16 +527,16 @@ Extend the protocol by registering new constants at runtime:
 
 ```ruby
 # Register a custom method (RFC 8132 - FETCH)
-Takagi::CoAP::Method.register(5, 'FETCH', :fetch, rfc: 'RFC 8132 §2')
+Takagi::CoAP::Registries::Method.register(5, 'FETCH', :fetch, rfc: 'RFC 8132 §2')
 
 # Now available as constant
-Takagi::CoAP::Method::FETCH  # => 5
+Takagi::CoAP::Registries::Method::FETCH  # => 5
 
 # Register custom response codes
-Takagi::CoAP::Response.register(231, '7.07 Custom Code', :custom_code)
+Takagi::CoAP::Registries::Response.register(231, '7.07 Custom Code', :custom_code)
 
 # Register custom options (e.g., for Block-Wise Transfer RFC 7959)
-Takagi::CoAP::Option.register(23, 'Block2', :block2, rfc: 'RFC 7959 §2.2')
+Takagi::CoAP::Registries::Option.register(23, 'Block2', :block2, rfc: 'RFC 7959 §2.2')
 ```
 
 **Benefits:**

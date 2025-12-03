@@ -25,7 +25,7 @@ module Takagi
       # @return [String] Method name (e.g., 'GET', 'OBSERVE')
       def coap_code_to_method(code)
         # Check if it's an OBSERVE request (GET with Observe option)
-        if code == CoAP::Method::GET && @options && @options[CoAP::Option::OBSERVE]
+        if code == CoAP::Registries::Method::GET && @options && @options[CoAP::Registries::Option::OBSERVE]
           'OBSERVE'
         else
           # Use CoAP registry to convert code to string
@@ -132,7 +132,7 @@ module Takagi
 
         # Uri-Path (11) and Uri-Query (15) are always stored as arrays
         case option_number
-        when CoAP::Option::URI_PATH, CoAP::Option::URI_QUERY
+        when CoAP::Registries::Option::URI_PATH, CoAP::Registries::Option::URI_QUERY
           options[option_number] ||= []
           options[option_number] << formatted
         else

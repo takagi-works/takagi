@@ -3,7 +3,7 @@
 RSpec.describe Takagi::Client::Response do
   # Helper to create a mock CoAP response
   def mock_response(code:, payload: 'test payload', content_format: nil)
-    options = content_format ? { Takagi::CoAP::Option::CONTENT_FORMAT => [content_format] } : {}
+    options = content_format ? { Takagi::CoAP::Registries::Option::CONTENT_FORMAT => [content_format] } : {}
     # Convert numeric code to the string format expected by Outbound
     code_string = Takagi::CoAP::CodeHelpers.to_string(code)
     outbound = Takagi::Message::Outbound.new(

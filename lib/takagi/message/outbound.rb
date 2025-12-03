@@ -4,7 +4,7 @@ module Takagi
   module Message
     # Class for outbound message that is coming from server
     class Outbound < Base
-      def initialize(code:, payload:, token: nil, message_id: nil, type: CoAP::MessageType::NON, options: {}, transport: :udp)
+      def initialize(code:, payload:, token: nil, message_id: nil, type: CoAP::Registries::MessageType::NON, options: {}, transport: :udp)
         super(nil, transport: transport)  # Call Base.initialize with transport
         @code = coap_method_to_code(code)
         @token = token || ''.b
@@ -27,7 +27,7 @@ module Takagi
         return payload.b if payload.is_a?(String)
 
         # Get content-format from options (default to JSON if not specified)
-        content_format = @options[CoAP::Option::CONTENT_FORMAT]
+        content_format = @options[CoAP::Registries::Option::CONTENT_FORMAT]
         # Options are stored as arrays, extract first element
         content_format = content_format.first if content_format.is_a?(Array)
         content_format ||= CoAP::Registries::ContentFormat::JSON
@@ -121,7 +121,7 @@ module Takagi
 
       def build_header
         version = Takagi::CoAP::VERSION
-        type = @type || CoAP::MessageType::ACK # Default ACK
+        type = @type || CoAP::Registries::MessageType::ACK # Default ACK
         token_length = @token.bytesize
         version_type_token_length = (version << 6) | (type << 4) | token_length
         [version_type_token_length, @code, @message_id].pack('CCn')

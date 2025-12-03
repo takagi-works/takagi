@@ -3,16 +3,16 @@
 module Takagi
   # CoAP Protocol implementation following RFC 7252 and related RFCs.
   #
-  # This module provides a registry-based system for CoAP protocol constants,
-  # allowing plugins and extensions to register additional constants without
-  # modifying core code.
+  # This module provides a registry-based system for CoAP protocol constants.
+  # Plugins and extensions can register additional constants without modifying
+  # core code by using the registries under {Takagi::CoAP::Registries}.
   #
   # @example Registering a custom response code
-  #   Takagi::CoAP::Response.register(231, '7.01 Custom Code', :custom_code)
+  #   Takagi::CoAP::Registries::Response.register(231, '7.01 Custom Code', :custom_code)
   #
   # @example Using registered constants
-  #   code = Takagi::CoAP::Response::CONTENT  # => 69
-  #   Takagi::CoAP::Response.name_for(69)      # => "2.05 Content"
+  #   code = Takagi::CoAP::Registries::Response::CONTENT  # => 69
+  #   Takagi::CoAP::Registries::Response.name_for(69)     # => "2.05 Content"
   module CoAP
     # Default CoAP port (RFC 7252 §6.1)
     DEFAULT_PORT = 5683
@@ -25,12 +25,13 @@ module Takagi
   end
 end
 
-# Load sub-modules
-require_relative 'coap/registry'
-require_relative 'coap/method'
-require_relative 'coap/response'
-require_relative 'coap/option'
-require_relative 'coap/content_format'
-require_relative 'coap/message_type'
-require_relative 'coap/signaling'
+# Load registries
+require_relative 'coap/registries/base'
+require_relative 'coap/registries/method'
+require_relative 'coap/registries/response'
+require_relative 'coap/registries/option'
+require_relative 'coap/registries/content_format'
+require_relative 'coap/registries/message_type'
+require_relative 'coap/registries/signaling'
+
 require_relative 'coap/code_helpers'

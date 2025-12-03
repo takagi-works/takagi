@@ -1,8 +1,0 @@
-module Takagi
-  module CoAP
-    # Backward compatibility alias for Registries::MessageType
-    #
-    # @deprecated Use {Registries::MessageType} instead. This alias will be removed in v2.0.0
-    MessageType: untyped
-  end
-end

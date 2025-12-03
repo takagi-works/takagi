@@ -9,7 +9,7 @@ module Takagi
       def initialize(data, transport: :udp)
         super(data, transport: transport)
         @method = coap_code_to_method(@code)
-        @response_code = coap_code_to_method(@code) if @code >= CoAP::Response::CREATED # Response
+        @response_code = coap_code_to_method(@code) if @code >= CoAP::Registries::Response::CREATED # Response
         @uri = parse_coap_uri
         @logger.debug "CoAP Options: #{@options.inspect}"
         @logger.debug "Parsed CoAP URI: #{@uri}"
@@ -21,9 +21,9 @@ module Takagi
                           0  # No type field in TCP CoAP
                         else
                           case @type
-                          when CoAP::MessageType::CON then CoAP::MessageType::ACK  # CON → ACK
-                          when CoAP::MessageType::NON then CoAP::MessageType::NON  # NON → NON
-                          else CoAP::MessageType::RST # fallback → RST
+                          when CoAP::Registries::MessageType::CON then CoAP::Registries::MessageType::ACK  # CON → ACK
+                          when CoAP::Registries::MessageType::NON then CoAP::Registries::MessageType::NON  # NON → NON
+                          else CoAP::Registries::MessageType::RST # fallback → RST
                           end
                         end
 
@@ -42,9 +42,9 @@ module Takagi
         options = @options || {}
         @logger.debug "Options received by parse_coap_uri: #{options.inspect}"
 
-        host = options[CoAP::Option::URI_HOST] || 'localhost'
-        path_segments = Array(options[CoAP::Option::URI_PATH]).flatten
-        query_segments = Array(options[CoAP::Option::URI_QUERY]).flatten
+        host = options[CoAP::Registries::Option::URI_HOST] || 'localhost'
+        path_segments = Array(options[CoAP::Registries::Option::URI_PATH]).flatten
+        query_segments = Array(options[CoAP::Registries::Option::URI_QUERY]).flatten
 
         path = path_segments.empty? ? '/' : "/#{path_segments.join('/')}"
         query = query_segments.empty? ? nil : query_segments.join('&')
@@ -70,7 +70,7 @@ module Takagi
       # Get Accept option
       # @return [Integer, nil] The Accept content format
       def accept
-        option(CoAP::Option::ACCEPT)
+        option(CoAP::Registries::Option::ACCEPT)
       end
 
       # Check if request accepts a specific content format
@@ -86,7 +86,7 @@ module Takagi
       # Get Content-Format option
       # @return [Integer, nil] The Content-Format
       def content_format
-        option(CoAP::Option::CONTENT_FORMAT)
+        option(CoAP::Registries::Option::CONTENT_FORMAT)
       end
 
       # Get query parameters as a hash
@@ -135,12 +135,12 @@ module Takagi
       # Convert content format name to number using CoAP registry
       def content_format_to_number(format)
         formats = {
-          'text/plain' => CoAP::ContentFormat::TEXT_PLAIN,
-          'application/link-format' => CoAP::ContentFormat::LINK_FORMAT,
-          'application/json' => CoAP::ContentFormat::JSON,
-          'application/cbor' => CoAP::ContentFormat::CBOR
+          'text/plain' => CoAP::Registries::ContentFormat::TEXT_PLAIN,
+          'application/link-format' => CoAP::Registries::ContentFormat::LINK_FORMAT,
+          'application/json' => CoAP::Registries::ContentFormat::JSON,
+          'application/cbor' => CoAP::Registries::ContentFormat::CBOR
         }
-        formats[format.to_s.downcase] || CoAP::ContentFormat::JSON
+        formats[format.to_s.downcase] || CoAP::Registries::ContentFormat::JSON
       end
     end
   end

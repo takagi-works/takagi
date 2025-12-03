@@ -1,7 +1,7 @@
 module Takagi
   # Helper methods for route handlers to improve DX
   #
-  # Dynamically generates response helper methods from CoAP::Response registry:
+  # Dynamically generates response helper methods from CoAP::Registries::Response registry:
   # - Success methods (2.xx): created(data = {}), changed(data = {}), etc.
   # - Error methods (4.xx, 5.xx): bad_request(message = ...), not_found(message = ...), etc.
   #
