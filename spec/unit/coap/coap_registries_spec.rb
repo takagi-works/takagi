@@ -1,159 +1,159 @@
 # frozen_string_literal: true
 
 RSpec.describe 'CoAP Registries' do
-  describe Takagi::CoAP::Method do
+  describe Takagi::CoAP::Registries::Method do
     it 'provides standard method constants' do
-      expect(Takagi::CoAP::Method::GET).to eq(1)
-      expect(Takagi::CoAP::Method::POST).to eq(2)
-      expect(Takagi::CoAP::Method::PUT).to eq(3)
-      expect(Takagi::CoAP::Method::DELETE).to eq(4)
+      expect(Takagi::CoAP::Registries::Method::GET).to eq(1)
+      expect(Takagi::CoAP::Registries::Method::POST).to eq(2)
+      expect(Takagi::CoAP::Registries::Method::PUT).to eq(3)
+      expect(Takagi::CoAP::Registries::Method::DELETE).to eq(4)
     end
 
     it 'provides method names' do
-      expect(Takagi::CoAP::Method.name_for(1)).to eq('GET')
-      expect(Takagi::CoAP::Method.name_for(2)).to eq('POST')
+      expect(Takagi::CoAP::Registries::Method.name_for(1)).to eq('GET')
+      expect(Takagi::CoAP::Registries::Method.name_for(2)).to eq('POST')
     end
 
     it 'validates method codes' do
-      expect(Takagi::CoAP::Method.valid?(1)).to be true
-      expect(Takagi::CoAP::Method.valid?(99)).to be false
+      expect(Takagi::CoAP::Registries::Method.valid?(1)).to be true
+      expect(Takagi::CoAP::Registries::Method.valid?(99)).to be false
     end
 
     it 'allows plugins to register custom methods' do
-      Takagi::CoAP::Method.register(5, 'FETCH', :fetch, rfc: 'RFC 8132')
-      expect(Takagi::CoAP::Method::FETCH).to eq(5)
-      expect(Takagi::CoAP::Method.name_for(5)).to eq('FETCH')
+      Takagi::CoAP::Registries::Method.register(5, 'FETCH', :fetch, rfc: 'RFC 8132')
+      expect(Takagi::CoAP::Registries::Method::FETCH).to eq(5)
+      expect(Takagi::CoAP::Registries::Method.name_for(5)).to eq('FETCH')
     ensure
       # Cleanup
-      Takagi::CoAP::Method.instance_variable_get(:@registry).delete(5)
-      Takagi::CoAP::Method.send(:remove_const, :FETCH) if Takagi::CoAP::Method.const_defined?(:FETCH, false)
+      Takagi::CoAP::Registries::Method.instance_variable_get(:@registry).delete(5)
+      Takagi::CoAP::Registries::Method.send(:remove_const, :FETCH) if Takagi::CoAP::Registries::Method.const_defined?(:FETCH, false)
     end
   end
 
-  describe Takagi::CoAP::Response do
+  describe Takagi::CoAP::Registries::Response do
     it 'provides standard response constants' do
-      expect(Takagi::CoAP::Response::CONTENT).to eq(69)
-      expect(Takagi::CoAP::Response::NOT_FOUND).to eq(132)
-      expect(Takagi::CoAP::Response::INTERNAL_SERVER_ERROR).to eq(160)
+      expect(Takagi::CoAP::Registries::Response::CONTENT).to eq(69)
+      expect(Takagi::CoAP::Registries::Response::NOT_FOUND).to eq(132)
+      expect(Takagi::CoAP::Registries::Response::INTERNAL_SERVER_ERROR).to eq(160)
     end
 
     it 'provides response names with dotted notation' do
-      expect(Takagi::CoAP::Response.name_for(69)).to eq('2.05 Content')
-      expect(Takagi::CoAP::Response.name_for(132)).to eq('4.04 Not Found')
+      expect(Takagi::CoAP::Registries::Response.name_for(69)).to eq('2.05 Content')
+      expect(Takagi::CoAP::Registries::Response.name_for(132)).to eq('4.04 Not Found')
     end
 
     it 'identifies success codes' do
-      expect(Takagi::CoAP::Response.success?(69)).to be true
-      expect(Takagi::CoAP::Response.success?(132)).to be false
+      expect(Takagi::CoAP::Registries::Response.success?(69)).to be true
+      expect(Takagi::CoAP::Registries::Response.success?(132)).to be false
     end
 
     it 'identifies client errors' do
-      expect(Takagi::CoAP::Response.client_error?(132)).to be true
-      expect(Takagi::CoAP::Response.client_error?(69)).to be false
+      expect(Takagi::CoAP::Registries::Response.client_error?(132)).to be true
+      expect(Takagi::CoAP::Registries::Response.client_error?(69)).to be false
     end
 
     it 'identifies server errors' do
-      expect(Takagi::CoAP::Response.server_error?(160)).to be true
-      expect(Takagi::CoAP::Response.server_error?(69)).to be false
+      expect(Takagi::CoAP::Registries::Response.server_error?(160)).to be true
+      expect(Takagi::CoAP::Registries::Response.server_error?(69)).to be false
     end
 
     it 'identifies any errors' do
-      expect(Takagi::CoAP::Response.error?(132)).to be true
-      expect(Takagi::CoAP::Response.error?(160)).to be true
-      expect(Takagi::CoAP::Response.error?(69)).to be false
+      expect(Takagi::CoAP::Registries::Response.error?(132)).to be true
+      expect(Takagi::CoAP::Registries::Response.error?(160)).to be true
+      expect(Takagi::CoAP::Registries::Response.error?(69)).to be false
     end
 
     it 'allows plugins to register custom response codes' do
-      Takagi::CoAP::Response.register(231, '7.07 Custom', :custom)
-      expect(Takagi::CoAP::Response::CUSTOM).to eq(231)
-      expect(Takagi::CoAP::Response.name_for(231)).to eq('7.07 Custom')
+      Takagi::CoAP::Registries::Response.register(231, '7.07 Custom', :custom)
+      expect(Takagi::CoAP::Registries::Response::CUSTOM).to eq(231)
+      expect(Takagi::CoAP::Registries::Response.name_for(231)).to eq('7.07 Custom')
     ensure
       # Cleanup
-      Takagi::CoAP::Response.instance_variable_get(:@registry).delete(231)
-      Takagi::CoAP::Response.send(:remove_const, :CUSTOM) if Takagi::CoAP::Response.const_defined?(:CUSTOM, false)
+      Takagi::CoAP::Registries::Response.instance_variable_get(:@registry).delete(231)
+      Takagi::CoAP::Registries::Response.send(:remove_const, :CUSTOM) if Takagi::CoAP::Registries::Response.const_defined?(:CUSTOM, false)
     end
   end
 
-  describe Takagi::CoAP::Option do
+  describe Takagi::CoAP::Registries::Option do
     it 'provides standard option constants' do
-      expect(Takagi::CoAP::Option::URI_PATH).to eq(11)
-      expect(Takagi::CoAP::Option::CONTENT_FORMAT).to eq(12)
-      expect(Takagi::CoAP::Option::URI_QUERY).to eq(15)
+      expect(Takagi::CoAP::Registries::Option::URI_PATH).to eq(11)
+      expect(Takagi::CoAP::Registries::Option::CONTENT_FORMAT).to eq(12)
+      expect(Takagi::CoAP::Registries::Option::URI_QUERY).to eq(15)
     end
 
     it 'provides option names' do
-      expect(Takagi::CoAP::Option.name_for(11)).to eq('Uri-Path')
-      expect(Takagi::CoAP::Option.name_for(12)).to eq('Content-Format')
+      expect(Takagi::CoAP::Registries::Option.name_for(11)).to eq('Uri-Path')
+      expect(Takagi::CoAP::Registries::Option.name_for(12)).to eq('Content-Format')
     end
 
     it 'identifies critical options' do
-      expect(Takagi::CoAP::Option.critical?(11)).to be true  # Uri-Path (odd)
-      expect(Takagi::CoAP::Option.critical?(12)).to be false # Content-Format (even)
+      expect(Takagi::CoAP::Registries::Option.critical?(11)).to be true  # Uri-Path (odd)
+      expect(Takagi::CoAP::Registries::Option.critical?(12)).to be false # Content-Format (even)
     end
 
     it 'allows plugins to register custom options' do
-      Takagi::CoAP::Option.register(65000, 'Custom-Option', :custom_option)
-      expect(Takagi::CoAP::Option::CUSTOM_OPTION).to eq(65000)
-      expect(Takagi::CoAP::Option.name_for(65000)).to eq('Custom-Option')
+      Takagi::CoAP::Registries::Option.register(65000, 'Custom-Option', :custom_option)
+      expect(Takagi::CoAP::Registries::Option::CUSTOM_OPTION).to eq(65000)
+      expect(Takagi::CoAP::Registries::Option.name_for(65000)).to eq('Custom-Option')
     ensure
       # Cleanup
-      Takagi::CoAP::Option.instance_variable_get(:@registry).delete(65000)
-      Takagi::CoAP::Option.send(:remove_const, :CUSTOM_OPTION) if Takagi::CoAP::Option.const_defined?(:CUSTOM_OPTION, false)
+      Takagi::CoAP::Registries::Option.instance_variable_get(:@registry).delete(65000)
+      Takagi::CoAP::Registries::Option.send(:remove_const, :CUSTOM_OPTION) if Takagi::CoAP::Registries::Option.const_defined?(:CUSTOM_OPTION, false)
     end
   end
 
-  describe Takagi::CoAP::ContentFormat do
+  describe Takagi::CoAP::Registries::ContentFormat do
     it 'provides standard content-format constants' do
-      expect(Takagi::CoAP::ContentFormat::TEXT_PLAIN).to eq(0)
-      expect(Takagi::CoAP::ContentFormat::JSON).to eq(50)
-      expect(Takagi::CoAP::ContentFormat::CBOR).to eq(60)
+      expect(Takagi::CoAP::Registries::ContentFormat::TEXT_PLAIN).to eq(0)
+      expect(Takagi::CoAP::Registries::ContentFormat::JSON).to eq(50)
+      expect(Takagi::CoAP::Registries::ContentFormat::CBOR).to eq(60)
     end
 
     it 'provides MIME types' do
-      expect(Takagi::CoAP::ContentFormat.mime_type_for(50)).to eq('application/json')
-      expect(Takagi::CoAP::ContentFormat.mime_type_for(0)).to eq('text/plain')
+      expect(Takagi::CoAP::Registries::ContentFormat.mime_type_for(50)).to eq('application/json')
+      expect(Takagi::CoAP::Registries::ContentFormat.mime_type_for(0)).to eq('text/plain')
     end
 
     it 'identifies JSON formats' do
-      expect(Takagi::CoAP::ContentFormat.json?(50)).to be true
-      expect(Takagi::CoAP::ContentFormat.json?(0)).to be false
+      expect(Takagi::CoAP::Registries::ContentFormat.json?(50)).to be true
+      expect(Takagi::CoAP::Registries::ContentFormat.json?(0)).to be false
     end
 
     it 'identifies text formats' do
-      expect(Takagi::CoAP::ContentFormat.text?(0)).to be true
-      expect(Takagi::CoAP::ContentFormat.text?(50)).to be false
+      expect(Takagi::CoAP::Registries::ContentFormat.text?(0)).to be true
+      expect(Takagi::CoAP::Registries::ContentFormat.text?(50)).to be false
     end
 
     it 'allows plugins to register custom formats' do
-      Takagi::CoAP::ContentFormat.register(65001, 'application/custom', :custom)
-      expect(Takagi::CoAP::ContentFormat::CUSTOM).to eq(65001)
-      expect(Takagi::CoAP::ContentFormat.mime_type_for(65001)).to eq('application/custom')
+      Takagi::CoAP::Registries::ContentFormat.register(65001, 'application/custom', :custom)
+      expect(Takagi::CoAP::Registries::ContentFormat::CUSTOM).to eq(65001)
+      expect(Takagi::CoAP::Registries::ContentFormat.mime_type_for(65001)).to eq('application/custom')
     ensure
       # Cleanup
-      Takagi::CoAP::ContentFormat.instance_variable_get(:@registry).delete(65001)
-      Takagi::CoAP::ContentFormat.send(:remove_const, :CUSTOM) if Takagi::CoAP::ContentFormat.const_defined?(:CUSTOM, false)
+      Takagi::CoAP::Registries::ContentFormat.instance_variable_get(:@registry).delete(65001)
+      Takagi::CoAP::Registries::ContentFormat.send(:remove_const, :CUSTOM) if Takagi::CoAP::Registries::ContentFormat.const_defined?(:CUSTOM, false)
     end
   end
 
-  describe Takagi::CoAP::MessageType do
+  describe Takagi::CoAP::Registries::MessageType do
     it 'provides standard message type constants' do
-      expect(Takagi::CoAP::MessageType::CONFIRMABLE).to eq(0)
-      expect(Takagi::CoAP::MessageType::NON_CONFIRMABLE).to eq(1)
-      expect(Takagi::CoAP::MessageType::ACKNOWLEDGEMENT).to eq(2)
-      expect(Takagi::CoAP::MessageType::RESET).to eq(3)
+      expect(Takagi::CoAP::Registries::MessageType::CONFIRMABLE).to eq(0)
+      expect(Takagi::CoAP::Registries::MessageType::NON_CONFIRMABLE).to eq(1)
+      expect(Takagi::CoAP::Registries::MessageType::ACKNOWLEDGEMENT).to eq(2)
+      expect(Takagi::CoAP::Registries::MessageType::RESET).to eq(3)
     end
 
     it 'provides convenient aliases' do
-      expect(Takagi::CoAP::MessageType::CON).to eq(0)
-      expect(Takagi::CoAP::MessageType::NON).to eq(1)
-      expect(Takagi::CoAP::MessageType::ACK).to eq(2)
-      expect(Takagi::CoAP::MessageType::RST).to eq(3)
+      expect(Takagi::CoAP::Registries::MessageType::CON).to eq(0)
+      expect(Takagi::CoAP::Registries::MessageType::NON).to eq(1)
+      expect(Takagi::CoAP::Registries::MessageType::ACK).to eq(2)
+      expect(Takagi::CoAP::Registries::MessageType::RST).to eq(3)
     end
 
     it 'provides type checking methods' do
-      expect(Takagi::CoAP::MessageType.confirmable?(0)).to be true
-      expect(Takagi::CoAP::MessageType.ack?(2)).to be true
-      expect(Takagi::CoAP::MessageType.reset?(3)).to be true
+      expect(Takagi::CoAP::Registries::MessageType.confirmable?(0)).to be true
+      expect(Takagi::CoAP::Registries::MessageType.ack?(2)).to be true
+      expect(Takagi::CoAP::Registries::MessageType.reset?(3)).to be true
     end
   end
 

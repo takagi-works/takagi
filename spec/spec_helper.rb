@@ -1,5 +1,23 @@
 # frozen_string_literal: true
 
+# Code coverage tracking
+require 'simplecov'
+SimpleCov.start do
+  add_filter '/spec/'
+  add_filter '/examples/'
+  add_group 'Core', 'lib/takagi/core'
+  add_group 'Server', 'lib/takagi/server'
+  add_group 'Message', 'lib/takagi/message'
+  add_group 'Network', 'lib/takagi/network'
+  add_group 'EventBus', 'lib/takagi/event_bus'
+  add_group 'Observer', 'lib/takagi/observer'
+  add_group 'Observable', 'lib/takagi/observable'
+  add_group 'Controllers', 'lib/takagi/controller'
+  add_group 'Application', 'lib/takagi/application'
+  add_group 'CoAP', 'lib/takagi/coap'
+  add_group 'Other', 'lib/takagi'
+end
+
 require "takagi"
 
 def find_free_port

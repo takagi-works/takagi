@@ -88,9 +88,9 @@ module Takagi
         router.add_route(method, path, metadata: metadata, &block)
       end
 
-      # Dynamically define route registration methods from CoAP::Method registry
+      # Dynamically define route registration methods from CoAP::Registries::Method registry
       # Generates: get, post, put, delete, fetch, etc.
-      CoAP::Method.all.each_value do |method_name|
+      CoAP::Registries::Method.all.each_value do |method_name|
         method_string = method_name.split.first # Extract 'GET' from 'GET'
         method_symbol = method_string.downcase.to_sym
 

@@ -134,7 +134,7 @@ RSpec.describe Takagi::Message do
 
     it "encodes integer options without leading zero bytes" do
       message = Takagi::Message::Outbound.new(
-        code: Takagi::CoAP::Signaling::CSM,
+        code: Takagi::CoAP::Registries::Signaling::CSM,
         payload: "",
         token: "",
         message_id: 0,

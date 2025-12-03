@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-RSpec.describe Takagi::CoAP::Registry do
+RSpec.describe Takagi::CoAP::Registries::Base do
   # Create a test registry
-  class TestRegistry < Takagi::CoAP::Registry
+  class TestRegistry < Takagi::CoAP::Registries::Base
     register(1, 'First Value', :first, rfc: 'RFC 0001')
     register(2, 'Second Value', :second)
     register(3, 'Third Value', nil, rfc: 'RFC 0003') # No symbol

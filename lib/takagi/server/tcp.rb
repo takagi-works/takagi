@@ -87,7 +87,7 @@ module Takagi
           @logger.debug "Received request from client: #{inbound_request.inspect}"
 
           case inbound_request.code
-          when CoAP::Signaling::CSM
+          when CoAP::Registries::Signaling::CSM
             @logger.debug "Received CSM from client"
             unless csm_received
               # Send our CSM in response to client's CSM
@@ -95,11 +95,11 @@ module Takagi
               csm_received = true
             end
             next
-          when CoAP::Signaling::PING
+          when CoAP::Registries::Signaling::PING
             @logger.debug "Received PING from client"
             send_pong(sock, inbound_request)
             next
-          when CoAP::Signaling::RELEASE, CoAP::Signaling::ABORT
+          when CoAP::Registries::Signaling::RELEASE, CoAP::Registries::Signaling::ABORT
             @logger.debug "Received #{Takagi::CoAP::Registries::Signaling.name_for(inbound_request.code)} from client, closing connection"
             break
           end
@@ -158,7 +158,7 @@ module Takagi
 
       def send_pong(sock, request)
         pong = Takagi::Message::Outbound.new(
-          code: CoAP::Signaling::PONG,
+          code: CoAP::Registries::Signaling::PONG,
           payload: '',
           token: request.token,
           message_id: 0,
@@ -233,7 +233,7 @@ module Takagi
           4 => ['']          # Block-Wise-Transfer supported (empty string for zero-length option)
         }
         Takagi::Message::Outbound.new(
-          code: CoAP::Signaling::CSM,
+          code: CoAP::Registries::Signaling::CSM,
           payload: '',
           token: '',
           message_id: 0,
