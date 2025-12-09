@@ -115,6 +115,13 @@ module Takagi
 
       private
 
+      # Returns content-format(s) declared for this route (CoRE `ct` metadata).
+      # Used by response helpers to align runtime negotiation with discovery data.
+      def core_content_formats
+        formats = @entry&.metadata&.[](:ct)
+        Array(formats).compact unless formats.nil?
+      end
+
       # Delegates method calls to the receiver (application instance)
       # This allows route handlers to call application methods within their blocks
       # Example: get '/users' do; fetch_users; end - calls application's fetch_users method

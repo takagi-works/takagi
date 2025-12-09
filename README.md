@@ -187,6 +187,30 @@ end
 - `changed(data)` - 2.04 Changed
 - `deleted(data)` - 2.02 Deleted
 - `valid(data)` - 2.03 Valid
+- `respond(payload, code: 2.05, formats: [ct], force: nil)` - negotiate `Content-Format` via `Accept`/defaults and build the CoAP response for you. `formats` is the allowed list; `force` pins a format (e.g., SenML CBOR) and returns `4.15` if unsupported. Unsupported `Accept` yields `4.06`.
+  - If you declare `ct` in your CoRE metadata, `respond` will use that as the allowed list automatically, so discovery and runtime stay in sync.
+
+Quick examples:
+
+```ruby
+get '/sensor' do
+  # Default (router content-format, typically JSON)
+  respond(sensor: 22.5)
+end
+
+get '/sensor' do
+  # Allow JSON or CBOR, honor Accept
+  respond({ sensor: 22.5 }, formats: [
+    CoAP::Registries::ContentFormat::JSON,
+    CoAP::Registries::ContentFormat::CBOR
+  ])
+end
+
+get '/senml' do
+  # Force a required format (e.g., SenML CBOR)
+  respond(senml_payload, force: CoAP::Registries::ContentFormat::CBOR)
+end
+```
 
 ### **Error Response Helpers**
 

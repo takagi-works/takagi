@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative 'response_builder'
+
 module Takagi
   # Helper methods for route handlers to improve DX
   #
@@ -14,16 +16,24 @@ module Takagi
   #   bad_request('Invalid input')
   #   unauthorized({ error: 'Token expired' })
   module Helpers
+    # Respond with content-format negotiation handled automatically.
+    #
+    # @param payload [Object] The payload to send
+    # @param code [Integer, String, Symbol] CoAP response code (defaults to 2.05 Content)
+    # @param formats [Array<Integer, Symbol, String>, nil] Allowed content-formats (defaults to router default)
+    # @param force [Integer, Symbol, String, nil] Force a specific content-format code
+    # @param options [Hash] Additional CoAP options
+    def respond(payload = {}, code: CoAP::Registries::Response::CONTENT, formats: nil, force: nil, options: {})
+      formats ||= core_content_formats if respond_to?(:core_content_formats, true)
+      ResponseBuilder.respond(request, payload, code: code, formats: formats, force: force, options: options, logger: Takagi.logger)
+    end
+
     # Returns a JSON response with 2.05 Content status and sets Content-Format to application/json
     # Similar to Sinatra's json helper, automatically sets the Content-Format option
     # @param data [Hash] The data to return as JSON
     # @return [Takagi::Message::Outbound] The response with JSON content-format
     def json(data = {})
-      request.to_response(
-        CoAP::Registries::Response.value_for(:content),
-        data,
-        options: { CoAP::Registries::Option::CONTENT_FORMAT => [Takagi::Router::DEFAULT_CONTENT_FORMAT] }
-      )
+      respond(data, code: CoAP::Registries::Response.value_for(:content), formats: [Takagi::Router::DEFAULT_CONTENT_FORMAT])
     end
 
     # Validates that required parameters are present
@@ -59,9 +69,7 @@ module Takagi
       if CoAP::Registries::Response.success?(code_number)
         # Success methods take optional data hash
         define_method(method_name) do |data = {}, options = {}|
-          options[CoAP::Registries::Option::CONTENT_FORMAT] ||= request.content_format
-          options[CoAP::Registries::Option::CONTENT_FORMAT] ||= Takagi::Router::DEFAULT_CONTENT_FORMAT
-          request.to_response(code_string, data, options: options)
+          respond(data, code: code_string, options: options)
         end
       else
         # Error methods take optional message (string or hash)
@@ -69,7 +77,7 @@ module Takagi
 
         define_method(method_name) do |message = default_message|
           data = message.is_a?(Hash) ? message : { error: message }
-          request.to_response(code_string, data)
+          respond(data, code: code_string)
         end
       end
     end
