@@ -187,6 +187,30 @@ end
 - `changed(data)` - 2.04 Changed
 - `deleted(data)` - 2.02 Deleted
 - `valid(data)` - 2.03 Valid
+- `respond(payload, code: 2.05, formats: [ct], force: nil)` - negotiate `Content-Format` via `Accept`/defaults and build the CoAP response for you. `formats` is the allowed list; `force` pins a format (e.g., SenML CBOR) and returns `4.15` if unsupported. Unsupported `Accept` yields `4.06`.
+  - If you declare `ct` in your CoRE metadata, `respond` will use that as the allowed list automatically, so discovery and runtime stay in sync.
+
+Quick examples:
+
+```ruby
+get '/sensor' do
+  # Default (router content-format, typically JSON)
+  respond(sensor: 22.5)
+end
+
+get '/sensor' do
+  # Allow JSON or CBOR, honor Accept
+  respond({ sensor: 22.5 }, formats: [
+    CoAP::Registries::ContentFormat::JSON,
+    CoAP::Registries::ContentFormat::CBOR
+  ])
+end
+
+get '/senml' do
+  # Force a required format (e.g., SenML CBOR)
+  respond(senml_payload, force: CoAP::Registries::ContentFormat::CBOR)
+end
+```
 
 ### **Error Response Helpers**
 
@@ -480,6 +504,35 @@ coap-client -m post coap://localhost:5683/sensor -e '{"value":42}'
 ## CoAP Protocol Registry System
 
 Takagi includes an extensible registry system for protocol constants, providing a plugin-friendly architecture where custom methods, response codes, options, and content formats can be registered.
+
+## Plugin System
+
+Takagi ships with an EventBus-backed plugin manager for runtime extensions and future clustering.
+
+- **Auto-discovery**: Finds plugins under `Takagi::Plugins::*` and `takagi-plugin-*` gems (configurable via `plugins.auto_discover`).
+- **Config + DSL**: Declare in code (`plugin MyPlugin, opt: 1`) or YAML:
+  ```yaml
+  plugins:
+    auto_discover: true
+    enabled:
+      - name: request_logging
+        options:
+          sample_rate: 0.1
+      - prometheus
+  ```
+- **Lifecycle hooks**: Plugins may implement `before_apply/apply/after_apply` (plus `before_unload/shutdown`). Events publish to `hooks.plugin_*` on the EventBus.
+- **Deps & versions**: `metadata` supports `dependencies:` and `requires:`; dependencies auto-enable first and versions are checked.
+- **Config schema**: Optional `config_schema` validates types/enums/ranges and fills defaults before apply.
+- **Hooked internals**: Core emits `hooks.*` for registry changes, route additions, middleware before/after, server start/stop, Observe subscribe/notify—ready for observability across nodes.
+
+Quick start:
+```ruby
+class MyApp < Takagi::Base
+  plugin Takagi::Plugins::RequestLogging, sample_rate: 0.2
+end
+
+MyApp.run! # enables plugins from DSL + config
+```
 
 ### **Using Protocol Constants**
 

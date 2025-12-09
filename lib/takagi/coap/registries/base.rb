@@ -22,6 +22,8 @@ module Takagi
       #   MyRegistry::FIRST   # => 1
       #   MyRegistry.name_for(1)  # => "First Value"
       #   MyRegistry.all      # => {1 => "First Value", 2 => "Second Value"}
+      require 'takagi/hooks'
+
       class Base
         def self.inherited(subclass)
           super
@@ -56,6 +58,15 @@ module Takagi
               reverse_registry[name] = value if name
               reverse_registry[symbol] = value if symbol
             end
+
+            Takagi::Hooks.emit(
+              :coap_registry_registered,
+              registry: self,
+              value: value,
+              name: name,
+              symbol: symbol,
+              rfc: rfc
+            )
           end
 
           # Get human-readable name for a value
@@ -134,6 +145,8 @@ module Takagi
                 remove_const(const_name) if const_name =~ /^[A-Z_]+$/
               end
             end
+
+            Takagi::Hooks.emit(:coap_registry_cleared, registry: self)
           end
 
           private

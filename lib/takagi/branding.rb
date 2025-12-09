@@ -82,7 +82,7 @@ module Takagi
     # @param message [String] Info message
     # @return [String] Styled info
     def self.info(message)
-      "#{LOGO} ℹ #{message}"
+      "#{LOGO} #{message}"
     end
   end
 end

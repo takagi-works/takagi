@@ -33,9 +33,9 @@ module Takagi
     class Message
       attr_reader :address, :body, :headers, :reply_address, :timestamp, :scope
 
-      def initialize(address, body, headers: {}, reply_address: nil, scope: Scope::DEFAULT)
+      def initialize(address, body, headers: {}, reply_address: nil, scope: Scope::DEFAULT, freeze_body: true)
         @address = address.freeze
-        @body = deep_freeze(body)
+        @body = freeze_body ? deep_freeze(body) : body
         @headers = deep_freeze(headers)
         @reply_address = reply_address&.freeze
         @scope = Scope.normalize(scope)
@@ -157,8 +157,8 @@ module Takagi
       #
       # @example Global event (cluster + external)
       #   EventBus.publish('sensor.temperature.room1', { value: 25.5 }, scope: :global)
-      def publish(address, body = nil, headers: {}, scope: Scope::DEFAULT)
-        message = Message.new(address, body, headers: headers, scope: scope)
+      def publish(address, body = nil, headers: {}, scope: Scope::DEFAULT, freeze_body: true)
+        message = Message.new(address, body, headers: headers, scope: scope, freeze_body: freeze_body)
 
         # Hook: Store message if buffering enabled
         @message_store&.store(address, message)
@@ -446,6 +446,8 @@ module Takagi
       # @param address [String] Event address
       # @return [Boolean]
       def distributed?(address)
+        return false if address.to_s.start_with?('hooks.')
+
         AddressPrefix.distributed?(address)
       end
 

@@ -5,6 +5,7 @@ require_relative 'core/attribute_set'
 require_relative 'helpers'
 require_relative 'router/route_matcher'
 require_relative 'router/metadata_extractor'
+require_relative 'hooks'
 
 module Takagi
   class Router
@@ -114,6 +115,13 @@ module Takagi
 
       private
 
+      # Returns content-format(s) declared for this route (CoRE `ct` metadata).
+      # Used by response helpers to align runtime negotiation with discovery data.
+      def core_content_formats
+        formats = @entry&.metadata&.[](:ct)
+        Array(formats).compact unless formats.nil?
+      end
+
       # Delegates method calls to the receiver (application instance)
       # This allows route handlers to call application methods within their blocks
       # Example: get '/users' do; fetch_users; end - calls application's fetch_users method
@@ -151,6 +159,13 @@ module Takagi
 
         # Extract metadata from core blocks inside the handler
         extract_metadata_from_handler(entry) if block
+
+        Takagi::Hooks.emit(
+          :router_route_added,
+          method: method,
+          path: path,
+          entry: entry
+        )
       end
     end
 

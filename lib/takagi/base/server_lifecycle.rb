@@ -26,6 +26,7 @@ module Takagi
       # @param banner [Boolean] Show startup banner (default: true)
       def run!(port: nil, config_path: 'config/takagi.yml', protocols: nil, router: nil, banner: true)
         boot!(config_path: config_path)
+        enable_plugins!(app: self)
 
         # Show startup banner
         if banner
