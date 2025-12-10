@@ -7,8 +7,8 @@ module Takagi
   class Base < Router
     # Provides a simple DSL for declaring and enabling plugins on boot.
     module PluginManagement
-      def plugin(plugin_ref, **options)
-        plugins_config << { ref: plugin_ref, options: options }
+      def plugin(plugin_ref, order: 0, **options)
+        plugins_config << { ref: plugin_ref, options: options, order: order }
       end
 
       def enable_plugins!(app: self)
@@ -33,9 +33,13 @@ module Takagi
         config_entries = Array(Takagi.config.plugins.enabled)
         config_entries.each do |entry|
           if entry.is_a?(Hash)
-            plugins_config << { ref: entry[:name] || entry['name'], options: entry[:options] || entry['options'] || {} }
+            plugins_config << {
+              ref: entry[:name] || entry['name'],
+              options: entry[:options] || entry['options'] || {},
+              order: entry[:order] || entry['order'] || 0
+            }
           else
-            plugins_config << { ref: entry, options: {} }
+            plugins_config << { ref: entry, options: {}, order: 0 }
           end
         end
       end
@@ -46,7 +50,7 @@ module Takagi
           key = entry[:ref].to_s
           seen[key] ||= entry
         end
-        seen.values.reverse
+        seen.values.reverse.sort_by { |entry| entry[:order] || 0 }
       end
 
       def resolve_plugin(ref)
