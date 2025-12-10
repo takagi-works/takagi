@@ -25,6 +25,8 @@ module Takagi
       # @return [void]
       def reset!
         @instance = nil
+        # Ensure Takagi::Base fetches a fresh router after reset
+        Takagi::Base.instance_variable_set(:@router, nil) if defined?(Takagi::Base)
       end
     end
 

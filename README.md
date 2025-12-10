@@ -248,6 +248,17 @@ end
 - `server_error(msg)` - 5.00 Internal Server Error
 - `service_unavailable(msg)` - 5.03 Service Unavailable
 
+### **Plugins**
+
+Ship features as plugins under `Takagi::Plugins::<Name>` with `.apply(app, opts = {})`. Plugins can:
+- Add routes/controllers (optionally auto-prefixed via `route_prefix` metadata)
+- Register serializers/content-formats
+- Register new transports/servers
+- Extend CoAP registries (methods, responses, options, content-formats)
+- Hook into lifecycle events (`docs/FIRST_PLUGIN_GUIDE.md`, `docs/HOOKS.md`)
+
+Enable with `plugin :name, order: 0, **options` in your app and call `enable_plugins!`, or via config `plugins.enabled`. Use `dependencies: [{ name: :other, version: '>=1.0.0' }]`, `requires: '1.2.3'`, `config_schema` for validated options, and `route_prefix` to isolate plugin routes. See `docs/FIRST_PLUGIN_GUIDE.md` for a full walkthrough.
+
 ### **Parameter Validation**
 
 Validate required parameters automatically:
