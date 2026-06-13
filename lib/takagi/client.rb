@@ -162,10 +162,18 @@ module Takagi
     # @param method [Symbol] HTTP method (:get, :post, :put, :delete)
     # @param path [String] Resource path
     # @param payload [String] (optional) Data for POST/PUT requests
+    # @param options [Hash] (optional) CoAP options { option_number => value }
+    # @param type [Integer, nil] (optional) CoAP message type
     # @param callback [Proc] (optional) Callback function for processing the response
-    def request(method, path, payload = nil, &callback)
+    def request(method, path, payload = nil, options: {}, type: nil, &callback)
       uri = URI.join(server_uri.to_s, path)
-      message = Takagi::Message::Request.new(method: method, uri: uri, payload: payload)
+      message = Takagi::Message::Request.new(
+        method: method,
+        uri: uri,
+        payload: payload,
+        type: type,
+        options: options
+      )
 
       if @use_retransmission
         request_with_retransmission(message, uri, &callback)

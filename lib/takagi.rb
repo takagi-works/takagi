@@ -11,7 +11,7 @@ module Takagi
   end
 
   def self.logger
-    @logger ||= Takagi::Logger.new
+    @logger ||= Takagi::Logger.new(level: ::Logger::INFO)
   end
 
   loader = Zeitwerk::Loader.for_gem

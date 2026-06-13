@@ -4,7 +4,10 @@ require 'logger'
 
 module Takagi
   class Logger
-    def initialize(log_output: $stdout, level: ::Logger::DEBUG)
+    # Default is INFO (production-friendly). Set the
+    # `TAKAGI_LOG_LEVEL` env var or pass a takagi.yml `logger:` block
+    # to see the verbose DEBUG noise.
+    def initialize(log_output: $stdout, level: ::Logger::INFO)
       @logger = ::Logger.new(log_output)
       @logger.level = level
     end

@@ -26,54 +26,44 @@ module Takagi
   class TcpClient < ClientBase
     protected
 
-    def request(method, path, payload = nil, &callback)
+    def request(method, path, payload = nil, options: {}, type: nil, &callback)
       uri = URI.join(server_uri.to_s, path)
 
-      # Build TCP-formatted message
-      # Extract URI path segments
+      # Build options: user options + Uri-Path segments + Uri-Query
+      combined = (options || {}).dup
       path_segments = uri.path.split('/').reject(&:empty?)
-      options = {}
-      path_segments.each_with_index do |segment, _index|
-        options[11] ||= []
-        options[11] << segment
+      unless path_segments.empty?
+        combined[CoAP::Registries::Option::URI_PATH] ||= []
+        path_segments.each { |s| combined[CoAP::Registries::Option::URI_PATH] << s }
+      end
+      if uri.query && !uri.query.empty?
+        combined[CoAP::Registries::Option::URI_QUERY] ||= []
+        uri.query.split('&').each { |q| combined[CoAP::Registries::Option::URI_QUERY] << q }
       end
 
-      # Convert method symbol to CoAP code
-      code = case method.to_sym
-             when :get then 1
-             when :post then 2
-             when :put then 3
-             when :delete then 4
-             else 1
-             end
-
-      # Generate token
+      # Map method symbol to code via registry
+      code = CoAP::CodeHelpers.to_numeric(method)
       token = SecureRandom.hex(4)
 
-      # Create TCP message using Outbound
       message = Takagi::Message::Outbound.new(
         code: code,
         payload: payload,
         token: token,
-        options: options,
+        type: type || CoAP::Registries::MessageType::CON,
+        options: combined,
         transport: :tcp
       )
 
       socket = TCPSocket.new(uri.host, uri.port || 5683)
-      # NEW: to_bytes now returns fully framed data
       framed_data = message.to_bytes(transport: :tcp)
       socket.write(framed_data)
 
-      # NEW: Read response using transport framing module
       response_data = Takagi::Network::Framing::Tcp.read_from_socket(socket)
-
       socket.close
 
-      # deliver_response expects raw bytes, not decoded message
       deliver_response(response_data, &callback) if response_data
     rescue StandardError => e
-      puts "TakagiTcpClient Error: #{e.message}"
-      puts e.backtrace.join("\n")
+      Takagi.logger.error "TakagiTcpClient Error: #{e.message}"
     end
 
     private

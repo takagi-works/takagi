@@ -31,77 +31,82 @@ module Takagi
 
     # Sends a GET request
     # @param path [String] Resource path
+    # @param options [Hash] CoAP options (e.g. { 17 => 50 } for Accept=application/json)
+    # @param type [Integer, nil] CoAP message type (CON/NON/ACK/RST). Defaults to CON.
     # @param callback [Proc] (optional) Callback function for processing the response
-    def get(path, &block)
-      request(:get, path, nil, &block)
+    def get(path, options: {}, type: nil, &block)
+      request(:get, path, nil, options: options, type: type, &block)
     end
 
     # Sends a POST request
     # @param path [String] Resource path
-    # @param payload [String] Data to send
+    # @param payload [String, Hash] Data to send (Hash is JSON-encoded automatically)
+    # @param options [Hash] CoAP options (e.g. { 12 => 50 } for Content-Format=application/json)
+    # @param type [Integer, nil] CoAP message type
     # @param callback [Proc] (optional) Callback function for processing the response
-    def post(path, payload, &block)
-      request(:post, path, payload, &block)
+    def post(path, payload = nil, options: {}, type: nil, &block)
+      request(:post, path, payload, options: options, type: type, &block)
     end
 
     # Sends a PUT request
     # @param path [String] Resource path
-    # @param payload [String] Data to send
+    # @param payload [String, Hash] Data to send
+    # @param options [Hash] CoAP options
+    # @param type [Integer, nil] CoAP message type
     # @param callback [Proc] (optional) Callback function for processing the response
-    def put(path, payload, &block)
-      request(:put, path, payload, &block)
+    def put(path, payload = nil, options: {}, type: nil, &block)
+      request(:put, path, payload, options: options, type: type, &block)
     end
 
     # Sends a DELETE request
     # @param path [String] Resource path
+    # @param options [Hash] CoAP options
+    # @param type [Integer, nil] CoAP message type
     # @param callback [Proc] (optional) Callback function for processing the response
-    def delete(path, &block)
-      request(:delete, path, nil, &block)
+    def delete(path, options: {}, type: nil, &block)
+      request(:delete, path, nil, options: options, type: type, &block)
+    end
+
+    # Sends an OBSERVE request (RFC 7641). The Observe option is added automatically;
+    # additional CoAP options can be supplied via `options:`.
+    # @param path [String] Resource path
+    # @param options [Hash] CoAP options (Observe is injected automatically)
+    # @param callback [Proc] (optional) Callback function for processing notifications
+    def observe(path, options: {}, &block)
+      merged = { Takagi::CoAP::Registries::Option::OBSERVE => 0 }.merge(options)
+      request(:get, path, nil, options: merged, &block)
     end
 
     # Sends a POST request with JSON payload (convenience method)
     # @param path [String] Resource path
     # @param data [Hash, Array] Data to encode as JSON
+    # @param options [Hash] CoAP options
     # @param callback [Proc] (optional) Callback function for processing the response
-    #
-    # @example
-    #   client.post_json('/sensors', {temperature: 25, humidity: 60})
-    def post_json(path, data, &block)
-      request(:post, path, JSON.generate(data), &block)
+    def post_json(path, data, options: {}, &block)
+      cf = Takagi::CoAP::Registries::ContentFormat::JSON
+      merged = { Takagi::CoAP::Registries::Option::CONTENT_FORMAT => cf }.merge(options)
+      request(:post, path, JSON.generate(data), options: merged, &block)
     end
 
     # Sends a PUT request with JSON payload (convenience method)
-    # @param path [String] Resource path
-    # @param data [Hash, Array] Data to encode as JSON
-    # @param callback [Proc] (optional) Callback function for processing the response
-    #
-    # @example
-    #   client.put_json('/config', {enabled: true})
-    def put_json(path, data, &block)
-      request(:put, path, JSON.generate(data), &block)
+    def put_json(path, data, options: {}, &block)
+      cf = Takagi::CoAP::Registries::ContentFormat::JSON
+      merged = { Takagi::CoAP::Registries::Option::CONTENT_FORMAT => cf }.merge(options)
+      request(:put, path, JSON.generate(data), options: merged, &block)
     end
 
     # Sends a GET request and automatically parses JSON response (convenience method)
-    # @param path [String] Resource path
-    # @yield [data] Yields the parsed JSON data
-    # @return [Hash, Array, nil] Parsed JSON data if no block given
-    #
-    # @example With block
-    #   client.get_json('/sensors') do |data|
-    #     puts data['temperature']
-    #   end
-    #
-    # @example Without block
-    #   data = client.get_json('/sensors')
-    def get_json(path, &block)
+    def get_json(path, options: {}, &block)
+      cf = Takagi::CoAP::Registries::ContentFormat::JSON
+      merged = { Takagi::CoAP::Registries::Option::ACCEPT => cf }.merge(options)
       if block_given?
-        get(path) do |response|
+        get(path, options: merged) do |response|
           data = response.is_a?(String) ? parse_json_response(response) : response.json
           block.call(data)
         end
       else
         result = nil
-        get(path) { |response| result = response.is_a?(String) ? parse_json_response(response) : response.json }
+        get(path, options: merged) { |response| result = response.is_a?(String) ? parse_json_response(response) : response.json }
         result
       end
     end
@@ -151,8 +156,10 @@ module Takagi
     # @param method [Symbol] HTTP method (:get, :post, :put, :delete)
     # @param path [String] Resource path
     # @param payload [String] (optional) Data for POST/PUT requests
+    # @param options [Hash] (optional) CoAP options { option_number => value }
+    # @param type [Integer, nil] (optional) CoAP message type
     # @param callback [Proc] (optional) Callback function for processing the response
-    def request(_method, _path, _payload = nil, &_callback)
+    def request(_method, _path, _payload = nil, options: {}, type: nil, &_callback)
       raise NotImplementedError, "#{self.class} must implement #request"
     end
 

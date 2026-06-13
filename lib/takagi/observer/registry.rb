@@ -61,6 +61,8 @@ module Takagi
             deliver_notification(subscription, path, new_value)
             update_sequence(subscription, new_value)
             subscription[:last_notified_at] = Time.now
+
+            Takagi::Hooks.emit(:observer_notification, path: path, subscription: subscription)
           end
 
           Takagi::Hooks.emit(:observe_notify_end, path: path, delivered: subscribers&.size || 0, value: new_value)

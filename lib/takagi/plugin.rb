@@ -19,21 +19,27 @@ module Takagi
         metadata = safe_metadata(plugin_module)
         raw_name = metadata[:name] || plugin_module.name&.split('::')&.last || "plugin_#{plugin_module.object_id}"
         name = raw_name.to_sym
-        deps = Array(metadata[:dependencies]).map { |dep| normalize_dependency(dep) }
-        requires = metadata[:requires]
 
-        info = PluginInfo.new(
-          name: name.to_sym,
-          module: plugin_module,
-          enabled: false,
-          metadata: metadata,
-          dependencies: deps,
-          requires: requires
-        )
+        @mutex.synchronize do
+          # Return existing info if already registered
+          return @registry[name] if @registry.key?(name)
 
-        @mutex.synchronize { @registry[name.to_sym] = info }
-        Takagi::Hooks.emit(:plugin_registered, name: name, metadata: metadata)
-        info
+          deps = Array(metadata[:dependencies]).map { |dep| normalize_dependency(dep) }
+          requires = metadata[:requires]
+
+          info = PluginInfo.new(
+            name: name.to_sym,
+            module: plugin_module,
+            enabled: false,
+            metadata: metadata,
+            dependencies: deps,
+            requires: requires
+          )
+
+          @registry[name.to_sym] = info
+          Takagi::Hooks.emit(:plugin_registered, name: name, metadata: metadata)
+          info
+        end
       end
 
       # Enable a plugin by name. Optionally pass options to apply.

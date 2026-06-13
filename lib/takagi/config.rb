@@ -209,7 +209,9 @@ module Takagi
     def set_server_defaults
       @port = 5683
       @bind_address = '0.0.0.0' # Bind to all interfaces by default
-      @logger = ::Logger.new($stdout)
+      # Production-friendly default: INFO. Set TAKAGI_LOG_LEVEL=DEBUG
+      # (or pass a takagi.yml `logger:` block) to see the verbose noise.
+      @logger = ::Logger.new($stdout, ::Logger::INFO)
       @auto_migrate = true
       @threads = 1
       @processes = 1
