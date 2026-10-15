@@ -67,26 +67,37 @@ module Takagi
         @options.key?(option_number)
       end
 
-      # Get Accept option
+      # Get Accept option normalized to its numeric content-format code
       # @return [Integer, nil] The Accept content format
       def accept
-        option(CoAP::Registries::Option::ACCEPT)
+        option_value_to_integer(option(CoAP::Registries::Option::ACCEPT))
       end
 
       # Check if request accepts a specific content format
       # @param format [String, Integer] Format name or number
       # @return [Boolean]
       def accept?(format)
-        return false unless accept
+        accept_code = accept
+        return false unless accept_code
 
         format_number = format.is_a?(Integer) ? format : content_format_to_number(format)
-        accept == format_number
+        accept_code == format_number
       end
 
-      # Get Content-Format option
+      # Get Content-Format option normalized to its numeric code
       # @return [Integer, nil] The Content-Format
       def content_format
-        option(CoAP::Registries::Option::CONTENT_FORMAT)
+        option_value_to_integer(option(CoAP::Registries::Option::CONTENT_FORMAT))
+      end
+
+      # Decode the request payload according to its Content-Format (JSON by default)
+      # @return [Object, nil] decoded body, or nil when the payload is empty
+      def data
+        return nil if payload.nil? || payload.empty?
+
+        Serialization::Registry.decode(payload, content_format || CoAP::Registries::ContentFormat::JSON)
+      rescue Serialization::UnknownFormatError, Serialization::DecodeError
+        payload
       end
 
       # Get query parameters as a hash
@@ -131,6 +142,17 @@ module Takagi
       end
 
       private
+
+      def option_value_to_integer(value)
+        return nil if value.nil?
+        return value if value.is_a?(Integer)
+        return nil unless value.is_a?(String)
+
+        bytes = value.b.bytes
+        return nil if bytes.empty? || bytes.length > 4
+
+        bytes.reduce(0) { |acc, byte| (acc << 8) | byte }
+      end
 
       # Convert content format name to number using CoAP registry
       def content_format_to_number(format)

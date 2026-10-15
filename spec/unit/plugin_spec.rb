@@ -23,6 +23,65 @@ RSpec.describe Takagi::Plugin do
     end
   end
 
+  describe 'health' do
+    it 'reports enabled, disabled, and unhealthy plugins' do
+      ok = Module.new do
+        def self.metadata
+          { name: :ok_plugin }
+        end
+
+        def self.apply(*); end
+      end
+      bad = Module.new do
+        def self.metadata
+          { name: :bad_plugin }
+        end
+
+        def self.apply(*); end
+
+        def self.healthy?
+          false
+        end
+      end
+
+      Takagi::Plugin.register(ok)
+      Takagi::Plugin.register(bad)
+      Takagi::Plugin.enable(:ok_plugin, app: app_class)
+      Takagi::Plugin.enable(:bad_plugin, app: app_class)
+
+      report = Takagi::Plugin.health.to_h { |h| [h[:name], h[:status]] }
+      expect(report[:ok_plugin]).to eq(:ok)
+      expect(report[:bad_plugin]).to eq(:unhealthy)
+      expect(Takagi::Plugin.healthy?).to be(false)
+    end
+  end
+
+  describe 'circular dependencies' do
+    it 'raises when plugins depend on each other' do
+      a = Module.new do
+        def self.metadata
+          { name: :cycle_a, dependencies: [{ name: :cycle_b }] }
+        end
+
+        def self.apply(*); end
+      end
+      b = Module.new do
+        def self.metadata
+          { name: :cycle_b, dependencies: [{ name: :cycle_a }] }
+        end
+
+        def self.apply(*); end
+      end
+
+      Takagi::Plugin.register(a)
+      Takagi::Plugin.register(b)
+
+      expect do
+        Takagi::Plugin.enable(:cycle_a, app: app_class)
+      end.to raise_error(ArgumentError, /Circular/)
+    end
+  end
+
   describe 'dependency version validation' do
     before do
       stub_const('Takagi::Plugins::Dep', Module.new do

@@ -108,21 +108,24 @@ module Takagi
       end
     end
 
+    # Get every route entry from all mounted controllers, with mount paths applied
+    #
+    # @return [Array<Router::RouteEntry>] All route entries
+    def route_entries
+      @mounted.flat_map do |mounted|
+        mounted.router.route_entries.map { |entry| prefixed_entry(entry, mounted.mount_path) }
+      end
+    end
+
     # Get link format entries from all mounted controllers
     #
     # @return [Array<Router::RouteEntry>] All link format entries
     def link_format_entries
-      @mounted.flat_map do |mounted|
-        mounted.router.link_format_entries.map do |entry|
-          # Create a copy with the full path
-          entry_copy = entry.dup
-          full_path = mounted.mount_path == '/' ? entry.path : File.join(mounted.mount_path, entry.path)
+      route_entries.reject { |entry| entry.metadata[:discovery] }
+    end
 
-          # Update the path in the copy
-          entry_copy.instance_variable_set(:@path, full_path)
-          entry_copy
-        end
-      end
+    def route_count
+      @mounted.sum { |mounted| mounted.router.route_count }
     end
 
     # Get all mounted controllers
@@ -142,6 +145,11 @@ module Takagi
     end
 
     private
+
+    def prefixed_entry(entry, mount_path)
+      full_path = mount_path == '/' ? entry.path : File.join(mount_path, entry.path)
+      entry.with_path(full_path)
+    end
 
     # Find the mounted controller that handles a path
     #

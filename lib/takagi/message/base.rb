@@ -2,6 +2,10 @@
 
 module Takagi
   module Message
+    # Raised when a datagram is too short or otherwise malformed to be parsed as a
+    # CoAP message (RFC 7252 3: a message format error).
+    class ParseError < StandardError; end
+
     # Base class for message
     class Base
       attr_reader :version, :type, :token, :message_id, :payload, :options, :code
@@ -46,6 +50,8 @@ module Takagi
       # Format: Len+TKL (1 byte) | Code (1 byte) | Token (TKL bytes) | Options | Payload
       def parse_tcp(data)
         bytes = data.bytes
+        raise ParseError, "TCP frame is shorter than the 2-byte CoAP-over-TCP header (#{bytes.size} bytes)" if bytes.size < 2
+
         first_byte = bytes[0]
 
         # First byte contains length nibble (upper 4 bits) and TKL (lower 4 bits)
@@ -53,11 +59,17 @@ module Takagi
         token_length = first_byte & 0b1111
 
         @code = bytes[1]
-        @token = token_length.positive? ? bytes[2, token_length].pack('C*') : ''.b
+        @token = read_token(bytes, 2, token_length)
 
-        # Parse options starting after code + token
-        @options = parse_options(bytes[(2 + token_length)..])
-        @payload = extract_payload(data)
+        if @code.zero?
+          @options = {}
+          @payload = nil
+        else
+          # Parse options starting after code + token
+          options_start = 2 + token_length
+          @options, options_end = parse_options(bytes[options_start..])
+          @payload = extract_payload(data, options_start + options_end)
+        end
 
         # TCP CoAP doesn't have version, type, or message_id
         @version = nil
@@ -67,16 +79,40 @@ module Takagi
 
       def parse(data)
         bytes = data.bytes
+        raise ParseError, "datagram is shorter than the 4-byte CoAP header (#{bytes.size} bytes)" if bytes.size < 4
+
         @version = (bytes[0] >> 6) & 0b11
         @type    = (bytes[0] >> 4) & 0b11
         token_length = bytes[0] & 0b1111
         @code = bytes[1]
         @message_id = bytes[2..3].pack('C*').unpack1('n')
-        @token   = token_length.positive? ? bytes[4, token_length].pack('C*') : ''.b
-        @options = parse_options(bytes[(4 + token_length)..])
-        @payload = extract_payload(data)
+        @token = read_token(bytes, 4, token_length)
+        if @code.zero?
+          @options = {}
+          @payload = nil
+        else
+          options_start = 4 + token_length
+          @options, options_end = parse_options(bytes[options_start..])
+          @payload = extract_payload(data, options_start + options_end)
+        end
       end
 
+      def read_token(bytes, offset, token_length)
+        return ''.b if token_length.zero?
+
+        if bytes.size < offset + token_length
+          raise ParseError,
+                "token length #{token_length} runs past the end of the message (#{bytes.size} bytes)"
+        end
+
+        bytes[offset, token_length].pack('C*')
+      end
+
+      # Parses the option sequence of a message.
+      #
+      # @param bytes [Array<Integer>, nil] message bytes from the first option onwards
+      # @return [Array(Hash, Integer)] the options, and the offset within `bytes` where the
+      #   sequence ended: the payload marker, or the end of the message when there is none
       def parse_options(bytes)
         options = {}
         position = 0
@@ -93,6 +129,8 @@ module Takagi
           length, position = decode_extended_value(bytes, position, length_raw)
 
           option_number = last_option_number + delta
+          raise ParseError, "option #{option_number} of #{length} bytes overruns the datagram" if position + length > bytes.length
+
           value = bytes[position, length].pack('C*')
           position += length
 
@@ -102,13 +140,21 @@ module Takagi
         end
 
         Takagi.logger.debug "Parsed CoAP options: #{options.inspect}"
-        options
+        [options, position]
       end
 
-      def extract_payload(data)
+      # Extracts the payload that follows the marker at `payload_start`.
+      #
+      # The marker offset comes from {#parse_options}: a 0xFF byte inside the header, the
+      # token or an option value is data, not a marker, so searching the message for the
+      # first 0xFF would corrupt roughly one message in 256 with random message ids.
+      #
+      # @param data [String] full message
+      # @param payload_start [Integer] offset of the payload marker
+      # @return [String, nil] the payload, or nil when the message carries none
+      def extract_payload(data, payload_start)
         Takagi.logger.debug "Extracting payload: #{data.inspect}"
-        payload_start = data.index("\xFF".b)
-        return nil unless payload_start
+        return nil unless data.getbyte(payload_start) == 0xFF
 
         payload = data[(payload_start + 1)..].dup.force_encoding('ASCII-8BIT')
         utf8 = payload.dup.force_encoding('UTF-8')
@@ -118,8 +164,12 @@ module Takagi
       def decode_extended_value(bytes, position, raw_value)
         case raw_value
         when 13
+          raise ParseError, 'option header declares a 1-byte extension past the end of the message' if position >= bytes.length
+
           [bytes[position] + 13, position + 1]
         when 14
+          raise ParseError, 'option header declares a 2-byte extension past the end of the message' if position + 2 > bytes.length
+
           extended = bytes[position, 2].pack('C*').unpack1('n') + 269
           [extended, position + 2]
         else

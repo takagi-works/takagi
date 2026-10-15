@@ -26,12 +26,16 @@ module Takagi
 
       # Creates a new Response wrapper
       # @param raw_data [String] Raw binary response data
-      def initialize(raw_data)
+      # @param payload [String, nil] Representation overriding the one in `raw_data`; set
+      #   when a Block2 transfer has been reassembled client-side
+      # @param options [Hash, nil] CoAP options overriding those in `raw_data`
+      # @param transport [Symbol] Transport that framed `raw_data` (:udp or :tcp)
+      def initialize(raw_data, payload: nil, options: nil, transport: :udp)
         @raw_data = raw_data
-        @inbound = Takagi::Message::Inbound.new(raw_data)
+        @inbound = Takagi::Message::Inbound.new(raw_data, transport: transport)
         @code = @inbound.code
-        @payload = @inbound.payload
-        @options = @inbound.options
+        @payload = payload.nil? ? @inbound.payload : payload
+        @options = options.nil? ? @inbound.options : options
         @token = @inbound.token
       end
 
@@ -69,6 +73,24 @@ module Takagi
       # @return [Boolean]
       def error?
         CoAP::Registries::Response.error?(@code)
+      end
+
+      # Check if the peer rejected the request with a Reset (RFC 7252 §4.2).
+      #
+      # Only a Reset rejects a request; an empty Acknowledgement merely
+      # promises a separate response and is not a rejection.
+      # @return [Boolean]
+      def rejected?
+        @inbound&.type == CoAP::Registries::MessageType::RST
+      end
+
+      # Check if the request was acknowledged without a response yet (RFC 7252 §5.2.2).
+      #
+      # An empty Acknowledgement carries the request's Message ID and code 0.00;
+      # the actual response arrives separately, so this is not a rejection.
+      # @return [Boolean]
+      def acknowledged_without_response?
+        @code.zero? && @inbound&.type == CoAP::Registries::MessageType::ACK
       end
 
       # Common 2.xx success codes (using registry)

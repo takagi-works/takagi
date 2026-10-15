@@ -91,8 +91,8 @@ RSpec.describe Takagi::EventBus, 'scope-aware publishing' do
       expect(received.scope).to eq(:cluster)
     end
 
-    it 'logs debug message about cluster distribution not implemented' do
-      expect(Takagi.logger).to receive(:debug).with(/Cluster distribution not yet implemented/)
+    it 'warns that cluster distribution is not implemented' do
+      expect(Takagi.logger).to receive(:warn).with(/Cluster distribution is not implemented/)
 
       event_bus.publish('cluster.event', { data: 'test' }, scope: :cluster)
     end
@@ -112,8 +112,8 @@ RSpec.describe Takagi::EventBus, 'scope-aware publishing' do
       expect(received.scope).to eq(:global)
     end
 
-    it 'logs debug message about cluster distribution not implemented' do
-      expect(Takagi.logger).to receive(:debug).with(/Cluster distribution not yet implemented/)
+    it 'warns that cluster distribution is not implemented' do
+      expect(Takagi.logger).to receive(:warn).with(/Cluster distribution is not implemented/)
 
       event_bus.publish('global.event', { data: 'test' }, scope: :global)
     end

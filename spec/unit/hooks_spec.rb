@@ -20,4 +20,16 @@ RSpec.describe Takagi::Hooks do
 
     expect { described_class.emit(:error_event, value: 1) }.not_to raise_error
   end
+
+  it 'exposes #on as an alias of #subscribe' do
+    payloads = []
+    handler = described_class.on(:alias_event) { |payload| payloads << payload[:value] }
+
+    described_class.emit(:alias_event, value: 7)
+    sleep 0.01
+
+    expect(payloads).to eq([7])
+
+    described_class.unsubscribe(:alias_event, handler)
+  end
 end

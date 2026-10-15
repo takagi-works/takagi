@@ -37,6 +37,10 @@ module Takagi
         register(39, 'Proxy-Scheme', :proxy_scheme, rfc: 'RFC 7252 §5.10.2')
         register(60, 'Size1', :size1, rfc: 'RFC 7252 §5.10.9')
 
+        register(23, 'Block2', :block2, rfc: 'RFC 7959 §2.2')
+        register(27, 'Block1', :block1, rfc: 'RFC 7959 §2.1')
+        register(28, 'Size2', :size2, rfc: 'RFC 7959 §4')
+
         # Check if an option is critical
         # Critical options must be understood by the recipient
         # @param number [Integer] Option number

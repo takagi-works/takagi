@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require 'set'
-require 'securerandom'
 
 module Takagi
   class EventBus
@@ -123,7 +122,7 @@ module Takagi
 
           # Store failed message for retry if message buffering is enabled
           # This allows recovery when remote nodes reconnect
-          EventBus.instance_variable_get(:@message_store)&.store_failed(
+          EventBus.message_store&.store_failed(
             address,
             message,
             "coap_observers:#{path}"
@@ -133,37 +132,16 @@ module Takagi
         # Subscribe to remote event via CoAP Observe
         # @param address [String] Event address
         # @param node_url [String] Remote node URL (e.g., 'coap://building-a:5683')
-        # @yield [message] Block called when remote notification received
-        # @return [String] Subscription ID
+        # @raise [NotImplementedError] until remote CoAP Observe subscriptions are implemented
         #
         # @example
-        #   id = CoAPBridge.subscribe_remote('sensor.temp.buildingA', 'coap://building-a:5683') do |msg|
+        #   CoAPBridge.subscribe_remote('sensor.temp.buildingA', 'coap://building-a:5683') do |msg|
         #     puts "Remote temp: #{msg.body[:value]}"
         #   end
         def subscribe_remote(address, node_url)
-          path = address_to_path(address)
-          full_url = "#{node_url}#{path}"
-
-          # TODO: Implement using Takagi::Observer::Client or similar
-          # This requires:
-          # 1. CoAP client that supports OBSERVE requests
-          # 2. Registration of observer with remote server
-          # 3. Handling of notification messages
-          # 4. Conversion of CoAP notifications back to EventBus messages
-          #
-          # Placeholder implementation:
-          subscription_id = SecureRandom.uuid
-
-          Takagi.logger.warn "Remote subscription not yet fully implemented: #{full_url}"
-          Takagi.logger.info "Subscription ID: #{subscription_id} for #{address} at #{node_url}"
-
-          # When implemented, should:
-          # 1. Create CoAP observer client
-          # 2. Send OBSERVE request to full_url
-          # 3. Register callback that converts CoAP notifications to EventBus messages
-          # 4. Call the provided block with the converted message
-
-          subscription_id
+          raise NotImplementedError,
+                "CoAPBridge.subscribe_remote(#{address.inspect}, #{node_url.inspect}) is not implemented; " \
+                'remote CoAP Observe subscriptions to EventBus addresses are planned but unavailable'
         end
 
         # Check if resource is registered

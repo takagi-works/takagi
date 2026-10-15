@@ -14,7 +14,7 @@ module Takagi
     #   Takagi::Server::Registry.register(:tcp, Server::Tcp)
     #
     # @example Building a server
-    #   server = Takagi::Server::Registry.build(:tcp, port: 5683, worker_threads: 4)
+    #   server = Takagi::Server::Registry.build(:tcp, port: 5683, max_connections: 100)
     #
     # @example Adding a custom protocol
     #   class MyCustomServer
@@ -51,7 +51,7 @@ module Takagi
         # @raise [ProtocolNotFoundError] If protocol is not registered
         #
         # @example
-        #   server = Registry.build(:tcp, port: 5683, worker_threads: 4)
+        #   server = Registry.build(:tcp, port: 5683, max_connections: 100)
         def build(protocol, **options)
           klass = get(protocol.to_sym)
           klass.new(**options)

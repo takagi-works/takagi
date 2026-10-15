@@ -26,8 +26,24 @@ module Takagi
         @options = build_options(options, kwargs)
       end
 
+      # Serializes the request into a CoAP datagram.
+      #
+      # A Reset is Empty by definition (RFC 7252 4.2), so a request typed as a Reset is
+      # emitted as the bare 4-byte header and one that would carry a payload is refused,
+      # as is any other Empty (0.00) shape that is not the bare header.
+      #
+      # @return [String] binary CoAP datagram
+      # @raise [Takagi::Network::Framing::EmptyMessageError] when the message must be Empty
+      #   (0.00) or is a Reset and it carries a token, options or a payload
+      #
+      # The empty/reset rule lives in the transport framer ({Takagi::Network::Framing::Udp}),
+      # which this encoder consults rather than restating it.
       def to_bytes
         return ''.b unless @code
+
+        return empty_reset_bytes if empty_reset?
+
+        verify_message_shape!
 
         version = Takagi::CoAP::VERSION
         token_length = @token.bytesize
@@ -40,6 +56,20 @@ module Takagi
       end
 
       private
+
+      def empty_reset?
+        @type == CoAP::Registries::MessageType::RST && @payload.to_s.empty?
+      end
+
+      def empty_reset_bytes
+        Takagi::Network::Framing::Udp.encode(
+          Outbound.new(code: '0.00', type: CoAP::Registries::MessageType::RST, message_id: @message_id, payload: '')
+        )
+      end
+
+      def verify_message_shape!
+        Takagi::Network::Framing::Udp.send(:verify_message_shape!, self)
+      end
 
       def build_options(user_options, kwargs)
         opts = {}

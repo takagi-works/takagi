@@ -17,6 +17,10 @@ RSpec.describe Takagi::Client::Response do
     outbound.to_bytes
   end
 
+  def empty_datagram(type:, message_id: 1)
+    [0x40 | (type << 4), 0x00, message_id].pack('CCn')
+  end
+
   describe '#initialize' do
     it 'wraps raw response data' do
       raw_data = mock_response(code: 69) # 2.05 Content
@@ -121,6 +125,41 @@ RSpec.describe Takagi::Client::Response do
     it 'returns nil when no content-format' do
       response = described_class.new(mock_response(code: 69))
       expect(response.content_format).to be_nil
+    end
+  end
+
+  describe 'rejection and acknowledgement checking' do
+    it 'treats a Reset as a rejection' do
+      response = described_class.new(empty_datagram(type: Takagi::CoAP::Registries::MessageType::RST, message_id: 0x1234))
+
+      expect(response.rejected?).to be true
+      expect(response.acknowledged_without_response?).to be false
+      expect(response.success?).to be false
+      expect(response.error?).to be false
+    end
+
+    it 'does not treat an empty Acknowledgement as a rejection' do
+      response = described_class.new(empty_datagram(type: Takagi::CoAP::Registries::MessageType::ACK, message_id: 0x1234))
+
+      expect(response.rejected?).to be false
+      expect(response.acknowledged_without_response?).to be true
+      expect(response.success?).to be false
+      expect(response.error?).to be false
+    end
+
+    it 'does not treat a 2.05 Content response as a rejection' do
+      response = described_class.new(mock_response(code: 69))
+
+      expect(response.rejected?).to be false
+      expect(response.acknowledged_without_response?).to be false
+      expect(response.success?).to be true
+    end
+
+    it 'does not treat an empty Confirmable message as a rejection or an acknowledgement' do
+      response = described_class.new(empty_datagram(type: Takagi::CoAP::Registries::MessageType::CON, message_id: 0x1234))
+
+      expect(response.rejected?).to be false
+      expect(response.acknowledged_without_response?).to be false
     end
   end
 

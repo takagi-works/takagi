@@ -15,12 +15,12 @@ module Takagi
       # @example Looking up signaling message names
       #   Takagi::CoAP::Registries::Signaling.name_for(225)  # => "7.01 CSM"
       class Signaling < Base
-        # RFC 8323 §5.3 - Signaling Codes
-        register(225, '7.01 CSM', :csm, rfc: 'RFC 8323 §5.3.1')          # Capabilities and Settings Message
-        register(226, '7.02 Ping', :ping, rfc: 'RFC 8323 §5.3.2')        # Ping
-        register(227, '7.03 Pong', :pong, rfc: 'RFC 8323 §5.3.3')        # Pong
-        register(228, '7.04 Release', :release, rfc: 'RFC 8323 §5.3.4')  # Release
-        register(229, '7.05 Abort', :abort, rfc: 'RFC 8323 §5.3.5')      # Abort
+        # RFC 8323 §5.1 - Signaling Codes
+        register(225, '7.01 CSM', :csm, rfc: 'RFC 8323 §5.3')            # Capabilities and Settings Message
+        register(226, '7.02 Ping', :ping, rfc: 'RFC 8323 §5.4')          # Ping
+        register(227, '7.03 Pong', :pong, rfc: 'RFC 8323 §5.4')          # Pong
+        register(228, '7.04 Release', :release, rfc: 'RFC 8323 §5.5')    # Release
+        register(229, '7.05 Abort', :abort, rfc: 'RFC 8323 §5.6')        # Abort
 
         # Check if code is a signaling code
         # @param code [Integer] Code to check

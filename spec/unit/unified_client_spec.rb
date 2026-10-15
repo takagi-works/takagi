@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'digest'
+require 'json'
+
 RSpec.describe Takagi::Client do
   describe 'unified API' do
     describe 'protocol detection' do
@@ -113,6 +116,7 @@ RSpec.describe Takagi::Client do
         expect(client).to respond_to(:put)
         expect(client).to respond_to(:delete)
         expect(client).to respond_to(:on)
+        expect(client).to respond_to(:ping)
 
         client.close
       end
@@ -138,6 +142,110 @@ RSpec.describe Takagi::Client do
           client.send(:create_client_impl, 'localhost:5683', 5, true)
         end.to raise_error(ArgumentError, /Unknown protocol/)
       end
+    end
+  end
+
+  describe 'block-wise transfer through the unified client' do
+    def with_server(scheme, protocol)
+      port = find_free_port
+      server = Takagi::Base.spawn!(port: port, protocols: [protocol])
+      client = described_class.new("#{scheme}://127.0.0.1:#{port}", protocol: protocol, timeout: 10)
+      yield(client)
+    ensure
+      client&.close
+      server&.shutdown!
+    end
+
+    it 'reassembles a large representation and uploads a large body over UDP' do
+      with_server('coap', :udp) do |client|
+        body = 'z' * 4096
+        expect(round_trip(client, body)).to eq('size' => 4096, 'digest' => Digest::SHA256.hexdigest(body))
+      end
+    end
+
+    it 'carries a large representation and body in one frame over TCP' do
+      with_server('coap+tcp', :tcp) do |client|
+        body = 'z' * 4096
+        expect(round_trip(client, body)).to eq('size' => 4096, 'digest' => Digest::SHA256.hexdigest(body))
+      end
+    end
+
+    # One large GET and one large POST through the public client API, returning the
+    # handler's report of the body it received.
+    def round_trip(client, representation)
+      response = nil
+      client.get('/client-block-wise/big') { |res| response = res }
+      expect(response.payload).to eq(big_representation)
+
+      echo = nil
+      client.post('/client-block-wise/echo', representation) { |res| echo = res }
+
+      JSON.parse(echo.payload)
+    end
+
+    it 'posts a large JSON body to the built-in echo route and reads the large reply' do
+      with_server('coap', :udp) do |client|
+        message = 'y' * 4096
+        echoed = nil
+
+        client.post_json('/echo', { message: message }) { |res| echoed = res }
+
+        expect(JSON.parse(echoed.payload)).to eq('echo' => message)
+      end
+    end
+  end
+
+  describe 'liveness probe' do
+    def with_protocol_server(protocol)
+      port = find_free_port
+      server = Takagi::Base.spawn!(port: port, protocols: [protocol])
+      scheme = protocol == :tcp ? 'coap+tcp' : 'coap'
+      client = described_class.new("#{scheme}://127.0.0.1:#{port}", timeout: 2)
+      yield(client)
+    ensure
+      client&.close
+      server&.shutdown!
+    end
+
+    def closed_tcp_port
+      server = TCPServer.new('127.0.0.1', 0)
+      port = server.addr[1]
+      server.close
+      port
+    end
+
+    it 'reports a spawned UDP server as alive' do
+      with_protocol_server(:udp) { |client| expect(client.ping).to be true }
+    end
+
+    it 'reports a spawned TCP server as alive' do
+      with_protocol_server(:tcp) { |client| expect(client.ping).to be true }
+    end
+
+    it 'reports a closed UDP port as not alive within the timeout instead of raising' do
+      client = described_class.new("coap://127.0.0.1:#{find_free_port}", timeout: 1)
+
+      started = Time.now
+      alive = client.ping
+      elapsed = Time.now - started
+
+      expect(alive).to be false
+      expect(elapsed).to be < 2.5
+    ensure
+      client&.close
+    end
+
+    it 'reports a closed TCP port as not alive within the timeout instead of raising' do
+      client = described_class.new("coap+tcp://127.0.0.1:#{closed_tcp_port}", timeout: 1)
+
+      started = Time.now
+      alive = client.ping
+      elapsed = Time.now - started
+
+      expect(alive).to be false
+      expect(elapsed).to be < 2.5
+    ensure
+      client&.close
     end
   end
 end

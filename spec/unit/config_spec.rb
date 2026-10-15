@@ -58,4 +58,61 @@ RSpec.describe Takagi::Config do
       expect(internal_logger.level).to eq(::Logger::WARN)
     end
   end
+
+  describe 'per-protocol settings' do
+    it 'parses protocol_settings overrides' do
+      write_config <<~YAML
+        protocol_settings:
+          udp:
+            processes: 8
+            threads: 4
+          tcp:
+            threads: 50
+            max_connections: 100
+      YAML
+
+      expect(config.protocol_settings[:udp]).to eq(processes: 8, threads: 4)
+      expect(config.protocol_settings[:tcp]).to eq(threads: 50, max_connections: 100)
+    end
+
+    it 'defaults to an empty hash' do
+      expect(config.protocol_settings).to eq({})
+    end
+  end
+
+  describe 'block-wise settings' do
+    it 'defaults to safe block-wise values' do
+      expect(config.block_wise.szx).to eq(6)
+      expect(config.block_wise.max_assembled_bytes).to eq(1_048_576)
+      expect(config.block_wise.assembly_ttl).to eq(30)
+      expect(config.block_wise.max_concurrent_assemblies).to eq(64)
+      expect(config.block_wise.enabled).to be(true)
+    end
+
+    it 'parses a block_wise block' do
+      write_config <<~YAML
+        block_wise:
+          szx: 4
+          max_assembled_bytes: 4096
+          assembly_ttl: 5
+          max_concurrent_assemblies: 8
+          enabled: false
+      YAML
+
+      expect(config.block_wise.szx).to eq(4)
+      expect(config.block_wise.max_assembled_bytes).to eq(4096)
+      expect(config.block_wise.assembly_ttl).to eq(5)
+      expect(config.block_wise.max_concurrent_assemblies).to eq(8)
+      expect(config.block_wise.enabled).to be(false)
+    end
+
+    it 'rejects an out-of-range szx' do
+      expect do
+        write_config <<~YAML
+          block_wise:
+            szx: 9
+        YAML
+      end.to raise_error(ArgumentError, /szx/)
+    end
+  end
 end

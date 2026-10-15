@@ -92,15 +92,16 @@ module Takagi
       # @param message_id [Integer] CoAP Message ID
       # @param response_data [String] Response message data
       def handle_response(message_id, response_data = nil)
-        transmission = nil
+        type = message_type(response_data)
+        return unless CoAP::Registries::MessageType.acknowledgement?(type) || CoAP::Registries::MessageType.reset?(type)
 
-        @mutex.synchronize do
-          transmission = @pending.delete(message_id)
-        end
+        transmission = @mutex.synchronize { @pending.delete(message_id) }
 
         return unless transmission
 
         @logger.debug "Received response for MID: #{message_id}, canceling retransmission"
+        return if type == CoAP::Registries::MessageType::ACK && response_data.getbyte(1).zero?
+
         transmission.callback&.call(response_data, nil)
       end
 
@@ -115,6 +116,12 @@ module Takagi
       end
 
       private
+
+      def message_type(response_data)
+        return nil unless response_data.is_a?(String) && response_data.bytesize >= 4
+
+        (response_data.getbyte(0) >> 4) & 0b11
+      end
 
       # Main retransmission loop
       def run_retransmission_loop

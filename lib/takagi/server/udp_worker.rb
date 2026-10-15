@@ -7,6 +7,8 @@ module Takagi
   module Server
     # Handles incoming UDP messages on behalf of the master Udp server.
     class UdpWorker
+      RECV_BUFFER_SIZE = 65_535
+
       def initialize(socket:, middleware_stack:, **options)
         @socket = socket
         @middleware_stack = middleware_stack
@@ -15,11 +17,13 @@ module Takagi
         @logger = options.fetch(:logger)
         @port = options.fetch(:port)
         @threads = options.fetch(:threads)
+        @recv_buffer_size = options.fetch(:recv_buffer_size, RECV_BUFFER_SIZE)
         @dedup_cache = Takagi::Message::DeduplicationCache.new
       end
 
       def run
         @shutdown = false
+        @parent_pid = Process.ppid
         trap('TERM') { @shutdown = true }
         trap('INT') { @shutdown = true }
 
@@ -34,17 +38,30 @@ module Takagi
 
       def process_loop(queue)
         loop do
-          break if @shutdown
+          break if stop_requested?
 
           next unless @socket.wait_readable(0.1)
 
-          queue << @socket.recvfrom(1024)
+          queue << receive_datagram
         end
         @logger.debug "[Worker PID: #{Process.pid}] Shutting down..."
         exit(0)
       rescue Interrupt, SignalException
         @logger.debug "[Worker PID: #{Process.pid}] Interrupted, shutting down..."
         exit(0)
+      end
+
+      def receive_datagram
+        data, addr = @socket.recvfrom(@recv_buffer_size)
+        if data.bytesize >= @recv_buffer_size
+          @logger.warn "[Worker PID: #{Process.pid}] Datagram may be truncated " \
+                       "(received #{data.bytesize} bytes into a #{@recv_buffer_size}-byte buffer)"
+        end
+        [data, addr]
+      end
+
+      def stop_requested?
+        @shutdown || Process.ppid != @parent_pid
       end
 
       def spawn_thread(queue)
@@ -60,7 +77,7 @@ module Takagi
         inbound_request = Takagi::Message::Inbound.new(request)
         log_inbound_request(inbound_request)
 
-        # RFC 7252 §4.4: Check for duplicate messages
+        # RFC 7252 §4.5: Check for duplicate messages
         source_endpoint = "#{addr[3]}:#{addr[1]}"
         if inbound_request.type.zero? # CON message
           cached_response = @dedup_cache.check_duplicate(inbound_request.message_id, source_endpoint)
@@ -70,11 +87,17 @@ module Takagi
           end
         end
 
-        immediate = immediate_response(inbound_request)
-        return transmit(immediate, addr) if immediate
+        immediate = immediate_response(inbound_request, request)
+        if immediate
+          @dedup_cache.store_response(inbound_request.message_id, source_endpoint, immediate.to_bytes) if inbound_request.type.zero?
+          return transmit(immediate, addr)
+        end
+
+        return unless routable_request?(inbound_request)
 
         # Delegate to controller's thread pool if available
         delegate_to_controller_pool(inbound_request, addr)
+      rescue Takagi::Message::ParseError => e then @logger.debug "Ignoring malformed datagram from #{addr[3]}:#{addr[1]}: #{e.inspect}"
       rescue StandardError => e
         @logger.error "Handle_request failed: #{e.message}"
       end
@@ -129,26 +152,46 @@ module Takagi
         @logger.debug "Method: #{inbound_request.method}"
       end
 
-      def immediate_response(inbound_request)
-        if inbound_request.type == 1 && inbound_request.method == 'EMPTY'
-          return Takagi::Message::Outbound.new(
-            code: '0.00',
-            payload: '',
-            token: '',
-            message_id: inbound_request.message_id,
-            type: 3
-          )
+      def immediate_response(inbound_request, datagram = nil)
+        if inbound_request.version != 1
+          log_ignored_datagram(inbound_request, 'unknown version')
+          return nil
         end
 
-        return unless inbound_request.code.zero? && inbound_request.method == 'EMPTY'
+        if [CoAP::Registries::MessageType::ACK, CoAP::Registries::MessageType::RST].include?(inbound_request.type)
+          log_ignored_datagram(inbound_request, 'response')
+          return nil
+        end
 
+        rejectable = format_error?(inbound_request, datagram) || inbound_request.code.zero?
+        reset_response(inbound_request) if rejectable
+      end
+
+      def reset_response(inbound_request)
         Takagi::Message::Outbound.new(
           code: '0.00',
           payload: '',
-          token: inbound_request.token,
+          token: '',
           message_id: inbound_request.message_id,
-          type: 2
+          type: CoAP::Registries::MessageType::RST
         )
+      end
+
+      def format_error?(inbound_request, datagram)
+        return true if datagram.is_a?(String) && !datagram.empty? && (datagram.getbyte(0) & 0b1111).between?(9, 15)
+        return false unless inbound_request.code.zero?
+
+        !inbound_request.token.empty? || (datagram.is_a?(String) && datagram.bytesize > 4)
+      end
+
+      def routable_request?(inbound_request)
+        inbound_request.version == 1 &&
+          [CoAP::Registries::MessageType::CON, CoAP::Registries::MessageType::NON].include?(inbound_request.type)
+      end
+
+      def log_ignored_datagram(inbound_request, reason)
+        @logger.debug "Ignoring #{reason} datagram (type: #{inbound_request.type}, " \
+                      "code: #{inbound_request.code}, MID: #{inbound_request.message_id})"
       end
 
       def log_middleware_result(result)

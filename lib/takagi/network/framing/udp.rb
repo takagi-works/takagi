@@ -3,13 +3,25 @@
 module Takagi
   module Network
     module Framing
+      # Raised when a caller asks a framer to serialize data that an Empty
+      # (code 0.00) or Reset message cannot carry: RFC 7252 4.1 defines an Empty
+      # message as the bare 4-byte header, and 4.2 requires a Reset to be Empty.
+      #
+      # Inherits from ScriptError, not StandardError, because
+      # Message::Outbound#to_bytes rescues StandardError and would otherwise
+      # swallow the programming error and emit an empty packet.
+      class EmptyMessageError < ScriptError
+      end
+
       # RFC 7252 CoAP over UDP framing
       module Udp
         class << self
           # Encode message to UDP datagram format
           # @param message [Message::Outbound] Message to encode
           # @return [String] Binary UDP datagram
+          # @raise [EmptyMessageError] when an Empty or Reset message carries data
           def encode(message)
+            verify_message_shape!(message)
             packet = build_header(message)
             packet += message.token.to_s.b
             packet += build_options(message)
@@ -25,6 +37,13 @@ module Takagi
           end
 
           private
+
+          def verify_message_shape!(message)
+            return unless message.code.zero? || message.type == CoAP::Registries::MessageType::RST
+            return if message.code.zero? && message.token.empty? && message.options.empty? && message.payload.to_s.empty?
+
+            raise EmptyMessageError, 'Empty (0.00) and Reset messages carry only the bare header (RFC 7252 4.1/4.2)'
+          end
 
           def build_header(message)
             version = Takagi::CoAP::VERSION

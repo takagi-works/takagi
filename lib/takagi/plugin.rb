@@ -93,6 +93,15 @@ module Takagi
         @mutex.synchronize { @registry.values.map { |info| { name: info.name, enabled: info.enabled, metadata: info.metadata } } }
       end
 
+      def health
+        snapshot = @mutex.synchronize { @registry.dup }
+        snapshot.map { |name, info| { name: name, enabled: info.enabled, status: health_status(info) } }
+      end
+
+      def healthy?
+        health.all? { |entry| %i[ok disabled].include?(entry[:status]) }
+      end
+
       # Auto-discover plugins under Takagi::Plugins namespace and takagi-plugin-* gems
       def auto_discover!
         discover_namespace_plugins
@@ -106,6 +115,13 @@ module Takagi
         return app unless prefix
 
         RoutePrefixProxy.new(app, prefix)
+      end
+
+      def health_status(info)
+        return :disabled unless info.enabled
+        return :ok unless info.module.respond_to?(:healthy?)
+
+        info.module.healthy? ? :ok : :unhealthy
       end
 
       def safe_metadata(mod)
@@ -131,20 +147,44 @@ module Takagi
       def resolve_dependencies!(info, app:)
         return if info.dependencies.nil? || info.dependencies.empty?
 
+        detect_cycle!(info)
+
         info.dependencies.each do |dep_name|
-          dep_key = dep_name[:name]
-          dep = @mutex.synchronize { @registry[dep_key] }
-          raise ArgumentError, "Plugin #{info.name} missing dependency #{dep_key}" unless dep
-
-          if dep_name[:version] && dep.metadata[:version]
-            requirement = Gem::Requirement.new(dep_name[:version])
-            dep_version = Gem::Version.new(dep.metadata[:version])
-            unless requirement.satisfied_by?(dep_version)
-              raise ArgumentError, "Plugin #{info.name} requires #{dep_key} #{dep_name[:version]}, found #{dep.metadata[:version]}"
-            end
-          end
-
+          dep = dependency_for!(info, dep_name)
           enable(dep.name, app: app) unless dep.enabled
+        end
+      end
+
+      def dependency_for!(info, dep_name)
+        dep_key = dep_name[:name]
+        dep = @mutex.synchronize { @registry[dep_key] }
+        raise ArgumentError, "Plugin #{info.name} missing dependency #{dep_key}" unless dep
+
+        check_dependency_version!(info, dep_name, dep)
+        dep
+      end
+
+      def check_dependency_version!(info, dep_name, dep)
+        return unless dep_name[:version] && dep.metadata[:version]
+
+        requirement = Gem::Requirement.new(dep_name[:version])
+        dep_version = Gem::Version.new(dep.metadata[:version])
+        return if requirement.satisfied_by?(dep_version)
+
+        raise ArgumentError,
+              "Plugin #{info.name} requires #{dep_name[:name]} #{dep_name[:version]}, found #{dep.metadata[:version]}"
+      end
+
+      def detect_cycle!(info, trail = [])
+        if trail.include?(info.name)
+          chain = (trail + [info.name]).join(' -> ')
+          raise ArgumentError, "Circular plugin dependency detected: #{chain}"
+        end
+
+        branch = trail + [info.name]
+        info.dependencies.each do |dep_name|
+          dep = @mutex.synchronize { @registry[dep_name[:name]] }
+          detect_cycle!(dep, branch) if dep
         end
       end
 

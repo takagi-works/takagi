@@ -30,6 +30,8 @@ module Takagi
         end
       end
 
+      alias on subscribe
+
       # Remove a previously registered handler.
       #
       # @param event [Symbol]
@@ -72,7 +74,7 @@ module Takagi
       def event_bus_ready?
         return false unless defined?(Takagi::EventBus)
 
-        executor = Takagi::EventBus.instance_variable_get(:@executor) rescue nil
+        executor = Takagi::EventBus.executor
         return false if executor && executor.respond_to?(:running?) && !executor.running?
 
         true

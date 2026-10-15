@@ -138,6 +138,8 @@ module Takagi
     end
 
     class << self
+      attr_reader :executor
+
       # ============================================
       # PRIMARY API: Pub/Sub Pattern
       # ============================================
@@ -175,12 +177,8 @@ module Takagi
           end
         end
 
-        # Scope-aware distribution
-        case message.scope
-        when Scope::CLUSTER, Scope::GLOBAL
-          # Cluster distribution via CoAP OBSERVE
-          # ClusterBridge.publish_to_cluster(address, message)
-          log_debug "Cluster distribution not yet implemented for scope: #{message.scope}"
+        if Scope.distributed?(message.scope)
+          log_warn "Cluster distribution is not implemented; '#{address}' was not propagated to other nodes"
         end
 
         # Global scope: external CoAP subscribers (via /.well-known/core)
@@ -213,14 +211,16 @@ module Takagi
       def send(address, body = nil, headers: {}, &reply_handler)
         reply_address = reply_handler ? generate_reply_address : nil
 
-        # Register temporary reply handler
         if reply_handler
-          consumer(reply_address, local_only: true, &reply_handler)
+          consumer_id = consumer(reply_address, local_only: true) do |reply_message|
+            reply_handler.call(reply_message)
+          ensure
+            unregister(consumer_id)
+          end
 
-          # Auto-unregister after timeout
           Thread.new do
-            sleep 30 # Reply timeout
-            unregister(reply_address)
+            sleep 30
+            unregister(consumer_id)
           end
         end
 
@@ -583,11 +583,16 @@ module Takagi
         "reply.#{SecureRandom.uuid}"
       end
 
-      # Log debug message
       def log_debug(message)
         return unless defined?(Takagi.logger)
 
         Takagi.logger.debug message
+      end
+
+      def log_warn(message)
+        return unless defined?(Takagi.logger)
+
+        Takagi.logger.warn message
       end
     end
   end

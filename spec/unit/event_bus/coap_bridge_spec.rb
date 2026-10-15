@@ -234,17 +234,10 @@ RSpec.describe Takagi::EventBus::CoAPBridge do
   end
 
   describe '.subscribe_remote' do
-    it 'returns subscription ID' do
-      id = described_class.subscribe_remote('sensor.temp.buildingA', 'coap://building-a:5683') { }
-      expect(id).to be_a(String)
-      expect(id).not_to be_empty
-    end
-
-    it 'generates unique subscription IDs' do
-      id1 = described_class.subscribe_remote('sensor.temp.room1', 'coap://node1:5683') { }
-      id2 = described_class.subscribe_remote('sensor.temp.room2', 'coap://node2:5683') { }
-
-      expect(id1).not_to eq(id2)
+    it 'raises NotImplementedError until remote observe is implemented' do
+      expect do
+        described_class.subscribe_remote('sensor.temp.buildingA', 'coap://building-a:5683') { }
+      end.to raise_error(NotImplementedError, /not implemented/)
     end
   end
 end

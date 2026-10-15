@@ -33,7 +33,8 @@ module Takagi
 
     # Delegate public methods to the implementation
     def_delegators :@impl, :server_uri, :timeout, :callbacks, :closed?
-    def_delegators :@impl, :get, :post, :put, :delete, :on
+    def_delegators :@impl, :get, :post, :put, :delete, :on, :observe
+    def_delegators :@impl, :ping
     def_delegators :@impl, :get_json, :post_json, :put_json, :close
 
     # Creates a new client and optionally yields it to a block.
@@ -57,12 +58,13 @@ module Takagi
     #   Takagi::Client.new('coap://localhost:5683') do |client|
     #     client.get('/resource')
     #   end
-    def initialize(server_uri, timeout: 5, protocol: nil, use_retransmission: true)
+    def initialize(server_uri, timeout: 5, protocol: nil, use_retransmission: true,
+                   recv_buffer_size: UdpClient::DEFAULT_RECV_BUFFER_SIZE)
       # Detect protocol from URI if not explicitly specified
       @protocol = protocol || detect_protocol(server_uri)
 
       # Delegate to the appropriate client implementation
-      @impl = create_client_impl(server_uri, timeout, use_retransmission)
+      @impl = create_client_impl(server_uri, timeout, use_retransmission, recv_buffer_size)
 
       # If a block is given, yield and auto-close
       return unless block_given?
@@ -104,8 +106,11 @@ module Takagi
     # @param server_uri [String] Server URI
     # @param timeout [Integer] Request timeout
     # @param use_retransmission [Boolean] Enable retransmission for UDP
+    # @param use_retransmission [Boolean] Enable retransmission for UDP
+    # @param recv_buffer_size [Integer] Maximum datagram size to receive
     # @return [UdpClient, TcpClient] The client implementation
-    def create_client_impl(server_uri, timeout, use_retransmission)
+    def create_client_impl(server_uri, timeout, use_retransmission,
+                           recv_buffer_size = UdpClient::DEFAULT_RECV_BUFFER_SIZE)
       # Normalize URI to include scheme if not present
       normalized_uri = normalize_uri(server_uri)
 
@@ -114,7 +119,12 @@ module Takagi
         require_relative 'tcp_client'
         TcpClient.new(normalized_uri, timeout: timeout)
       when :udp
-        UdpClient.new(normalized_uri, timeout: timeout, use_retransmission: use_retransmission)
+        UdpClient.new(
+          normalized_uri,
+          timeout: timeout,
+          use_retransmission: use_retransmission,
+          recv_buffer_size: recv_buffer_size
+        )
       else
         raise ArgumentError, "Unknown protocol: #{@protocol}. Use :udp or :tcp"
       end
@@ -134,13 +144,17 @@ module Takagi
   # UDP-specific client implementation (internal)
   # Users should use Takagi::Client with protocol: :udp instead
   class UdpClient < ClientBase
+    DEFAULT_RECV_BUFFER_SIZE = 65_535
+
     # Initializes the UDP client
     # @param server_uri [String] URL of the Takagi server
     # @param timeout [Integer] Maximum time to wait for a response
     # @param use_retransmission [Boolean] Enable RFC 7252 §4.2 compliant retransmission (default: true)
-    def initialize(server_uri, timeout: 5, use_retransmission: true)
+    # @param recv_buffer_size [Integer] Maximum datagram size to receive (default: 65_535)
+    def initialize(server_uri, timeout: 5, use_retransmission: true, recv_buffer_size: DEFAULT_RECV_BUFFER_SIZE)
       super(server_uri, timeout: timeout)
       @use_retransmission = use_retransmission
+      @recv_buffer_size = recv_buffer_size
 
       return unless @use_retransmission
 
@@ -156,58 +170,130 @@ module Takagi
       super
     end
 
-    private
-
-    # Executes a request to the server using Takagi::Message::Request
-    # @param method [Symbol] HTTP method (:get, :post, :put, :delete)
-    # @param path [String] Resource path
-    # @param payload [String] (optional) Data for POST/PUT requests
-    # @param options [Hash] (optional) CoAP options { option_number => value }
-    # @param type [Integer, nil] (optional) CoAP message type
-    # @param callback [Proc] (optional) Callback function for processing the response
-    def request(method, path, payload = nil, options: {}, type: nil, &callback)
-      uri = URI.join(server_uri.to_s, path)
-      message = Takagi::Message::Request.new(
-        method: method,
-        uri: uri,
-        payload: payload,
-        type: type,
-        options: options
-      )
-
-      if @use_retransmission
-        request_with_retransmission(message, uri, &callback)
-      else
-        request_simple(message, uri, &callback)
-      end
+    # UDP sends one datagram per message, so RFC 7959 block-wise iteration applies in
+    # both directions here (see {ClientBlockWiseIteration}).
+    #
+    # @return [Boolean]
+    def block_wise_transport?
+      true
     end
 
-    # Simple request without retransmission (legacy mode)
-    def request_simple(message, uri, &callback)
+    # Builds a UDP CoAP request message (RFC 7252).
+    #
+    # @param method [Symbol] HTTP method
+    # @param uri [URI] Absolute request URI
+    # @param payload [String, nil] Request body
+    # @param token [String] Request token
+    # @param options [Hash] CoAP options
+    # @param type [Integer, nil] CoAP message type
+    # @return [Takagi::Message::Request]
+    def build_request_message(method, uri, payload, token:, options: {}, type: nil)
+      Takagi::Message::Request.new(method: method, uri: uri, payload: payload, token: token, type: type, options: options)
+    end
+
+    # Sends one request and returns its raw response, retransmitting when enabled.
+    #
+    # @param message [Takagi::Message::Request] Message to send
+    # @param uri [URI] Destination URI
+    # @return [String, nil] raw response bytes, or nil on timeout/transport error
+    def exchange(message, uri)
+      return exchange_with_retransmission(message, uri) if @use_retransmission
+
+      exchange_simple(message, uri)
+    end
+
+    # Sends a CoAP ping - an Empty Confirmable message - and reports whether the peer
+    # answered with the Reset that elicits (RFC 7252 1.2, Table 1).
+    #
+    # The probe travels on its own socket under its own Message ID, so it can neither
+    # collide with a request in flight nor consume one, and the socket is always closed.
+    #
+    # @return [Boolean] true when a Reset carrying the probe's Message ID arrives
+    def transport_ping
       socket = UDPSocket.new
-      socket.send(message.to_bytes, 0, uri.host, uri.port || 5683)
+      message = build_ping_message
+      socket.send(message.to_bytes, 0, server_uri.host, server_uri.port || 5683)
 
-      unless socket.wait_readable(@timeout)
-        puts 'TakagiClient Error: Request timeout'
-        return
-      end
-
-      response, = socket.recvfrom(1024)
-      deliver_raw_response(response, &callback)
+      read_ping_reset(socket, message.message_id)
     rescue StandardError => e
-      puts "TakagiClient Error: #{e.message}"
+      Takagi.logger.debug "TakagiClient ping error: #{e.message}"
+      false
     ensure
       socket&.close unless socket&.closed?
     end
 
-    # RFC 7252 §4.2 compliant request with automatic retransmission
-    def request_with_retransmission(message, uri, &callback)
+    private
+
+    # One datagram exchange without retransmission (legacy mode).
+    #
+    # An Empty Acknowledgement of the request is not its answer (RFC 7252 §5.2.2), so
+    # {#read_answer} spends the rest of the timeout waiting for the response that follows.
+    #
+    # @param message [Takagi::Message::Request] Message to send
+    # @param uri [URI] Destination URI
+    # @return [String, nil] raw response bytes, or nil on timeout/transport error
+    def exchange_simple(message, uri)
+      socket = UDPSocket.new
+      socket.send(message.to_bytes, 0, uri.host, uri.port || 5683)
+
+      read_answer(socket, message)
+    rescue StandardError => e
+      Takagi.logger.error "TakagiClient error: #{e.message}"
+      nil
+    ensure
+      socket&.close unless socket&.closed?
+    end
+
+    def read_answer(socket, message)
+      deadline = Time.now + @timeout
+      remaining = @timeout
+      loop do
+        return timed_out unless socket.wait_readable(remaining)
+
+        response = read_datagram(socket)
+        return response if response.nil? || !empty_acknowledgement?(response, message)
+
+        remaining = deadline - Time.now
+        return timed_out unless remaining.positive?
+      end
+    end
+
+    # RFC 7252 §4.2 compliant exchange with automatic retransmission.
+    #
+    # @param message [Takagi::Message::Request] Message to send
+    # @param uri [URI] Destination URI
+    # @return [String, nil] raw response bytes, or nil on timeout/transport error
+    def exchange_with_retransmission(message, uri)
       socket = UDPSocket.new
       state = send_with_retransmission(message, socket, uri)
       socket.close
-      handle_response_state(state, &callback)
-    rescue StandardError => e
-      puts "TakagiClient Error: #{e.message}"
+      return state[:response_data] if state[:response_received] && !state[:error]
+      return timed_out unless state[:error]
+
+      Takagi.logger.error "TakagiClient error: #{state[:error]}"
+      nil
+    end
+
+    # Reads one response datagram, warning when it fills the whole receive buffer.
+    #
+    # @param socket [UDPSocket] Socket to read from
+    # @return [String, nil] raw response bytes, or nil when the datagram was truncated
+    def read_datagram(socket)
+      response, = socket.recvfrom(@recv_buffer_size)
+      if response.bytesize >= @recv_buffer_size
+        Takagi.logger.warn "TakagiClient response may be truncated (#{response.bytesize} bytes into a #{@recv_buffer_size}-byte buffer)"
+        return nil
+      end
+
+      response
+    end
+
+    # Logs the shared timeout warning.
+    #
+    # @return [nil]
+    def timed_out
+      Takagi.logger.warn 'TakagiClient request timed out'
+      nil
     end
 
     def send_with_retransmission(message, socket, uri)
@@ -229,9 +315,14 @@ module Takagi
     def check_socket_for_response(message, socket, state)
       return unless socket.wait_readable(0.1)
 
-      state[:response_data], = socket.recvfrom(1024)
+      state[:response_data], = socket.recvfrom(@recv_buffer_size)
+      if state[:response_data].bytesize >= @recv_buffer_size
+        update_state(state, nil, "response datagram may be truncated (#{state[:response_data].bytesize} bytes)")
+        return
+      end
+
       @retransmission_manager.handle_response(message.message_id, state[:response_data])
-      state[:response_received] = true
+      state[:response_received] = true unless empty_acknowledgement?(state[:response_data], message)
     rescue StandardError => e
       update_state(state, nil, e.message)
     end
@@ -242,24 +333,52 @@ module Takagi
       state[:response_received] = true
     end
 
-    def handle_response_state(state, &callback)
-      if state[:response_received] && !state[:error]
-        deliver_response(state[:response_data], &callback)
-      elsif state[:error]
-        puts "TakagiClient Error: #{state[:error]}"
-      else
-        puts 'TakagiClient Error: Request timeout'
+    # Builds the UDP liveness probe: an Empty Confirmable message (RFC 7252 1.2/
+    # Table 1). Its Message ID is drawn fresh so it never repeats a request's.
+    #
+    # @return [Takagi::Message::Outbound]
+    def build_ping_message
+      Takagi::Message::Outbound.new(
+        code: '0.00', payload: '', token: ''.b,
+        message_id: SecureRandom.random_number(0x1_0000),
+        type: CoAP::Registries::MessageType::CON
+      )
+    end
+
+    # Waits out the probe's timeout for a Reset echoing `message_id`.
+    #
+    # @param socket [UDPSocket] the socket the probe went out on
+    # @param message_id [Integer] the probe's Message ID
+    # @return [Boolean]
+    def read_ping_reset(socket, message_id)
+      deadline = Time.now + @timeout
+      loop do
+        remaining = deadline - Time.now
+        return false unless remaining.positive? && socket.wait_readable(remaining)
+
+        datagram, = socket.recvfrom(@recv_buffer_size)
+        return true if reset_for?(datagram, message_id)
       end
     end
 
-    def deliver_raw_response(response, &callback)
-      if callback
-        callback.call(response)
-      elsif @callbacks[:response]
-        @callbacks[:response].call(response)
-      else
-        puts response
-      end
+    # Whether a datagram is the Reset answering a ping with `message_id`.
+    #
+    # @param datagram [String, nil] raw datagram
+    # @param message_id [Integer] the probe's Message ID
+    # @return [Boolean]
+    def reset_for?(datagram, message_id)
+      return false unless datagram.is_a?(String) && datagram.bytesize >= 4
+      return false unless ((datagram.getbyte(0) >> 4) & 0b11) == CoAP::Registries::MessageType::RST
+
+      datagram.byteslice(2, 2).unpack1('n') == message_id
+    end
+
+    def empty_acknowledgement?(data, message)
+      return false unless data.is_a?(String) && data.bytesize >= 4
+      return false unless ((data.getbyte(0) >> 4) & 0b11) == CoAP::Registries::MessageType::ACK
+      return false unless data.getbyte(1).zero?
+
+      data.byteslice(2, 2).unpack1('n') == message.message_id
     end
   end
 end

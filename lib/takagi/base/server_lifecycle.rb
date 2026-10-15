@@ -54,10 +54,7 @@ module Takagi
                    Takagi.config.protocols
                  end.map(&:to_sym)
 
-        servers = protos.map do |proto|
-          # Temporary backward compatibility - will use registry after transition
-          proto == :tcp ? Takagi::Server::Tcp.new(port: port) : Takagi::Server::Udp.new(port: port)
-        end
+        servers = build_servers(protos, port)
 
         if servers.length == 1
           server = servers.first
@@ -99,7 +96,7 @@ module Takagi
         puts Branding.log("Processes: #{Takagi.config.processes}") if Takagi.config.processes > 0
 
         # Route count
-        route_count = router.instance_variable_get(:@routes)&.size || 0
+        route_count = router.route_count
         puts Branding.log("Routes registered: #{route_count}")
 
         puts
@@ -117,10 +114,16 @@ module Takagi
       # @param router [Router, CompositeRouter, nil] Custom router (uses global if nil)
       # @return [Array<Server>] Array of server instances
       def build_servers(protocols, port, router: nil)
-        threads = Takagi.config.threads
-        processes = Takagi.config.processes
         Array(protocols).map(&:to_sym).map do |protocol|
-          instantiate_server(protocol, port, threads: threads, processes: processes, router: router)
+          settings = Takagi.config.protocol_settings[protocol] || {}
+          instantiate_server(
+            protocol,
+            port,
+            threads: settings[:threads] || Takagi.config.threads,
+            processes: settings[:processes] || Takagi.config.processes,
+            max_connections: settings[:max_connections] || Takagi.config.max_connections,
+            router: router
+          )
         end
       end
 
@@ -132,13 +135,13 @@ module Takagi
       # @param processes [Integer] Number of worker processes (UDP only)
       # @param router [Router, CompositeRouter, nil] Custom router (uses global if nil)
       # @return [Server] Server instance
-      def instantiate_server(protocol, port, threads:, processes:, router: nil)
+      def instantiate_server(protocol, port, threads:, processes:, max_connections: nil, router: nil)
         options = { port: port }
-        options[:worker_threads] = threads
+        options[:worker_threads] = threads if protocol == :udp
         options[:router] = router if router
 
-        # UDP requires worker_processes, TCP doesn't use it
         options[:worker_processes] = processes if protocol == :udp
+        options[:max_connections] = max_connections if protocol == :tcp && max_connections
         Takagi.logger.debug("Instantiating server for #{protocol} on port #{port} with #{options}")
         Server::Registry.build(protocol, **options)
       end

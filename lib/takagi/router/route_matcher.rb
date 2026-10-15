@@ -61,22 +61,37 @@ module Takagi
       def extract_dynamic_params(route_path, path)
         route_parts = route_path.split('/')
         path_parts = path.split('/')
-        return unless route_parts.length == path_parts.length
-
         params = {}
-        matched = true
+        splat = []
 
         route_parts.each_with_index do |part, index|
-          if part.start_with?(':')
-            params[part[1..].to_sym] = path_parts[index]
-          elsif part != path_parts[index]
-            @logger.debug "No Match found! Params: #{params.inspect} to #{path}"
-            matched = false
-            break
-          end
+          result = match_segment(part, path_parts[index], params, splat)
+          return nil if result == :no_match
+          return params.merge(splat: splat + (path_parts[index..] || [])) if result == :rest
         end
 
-        matched ? params : nil
+        return nil unless route_parts.length == path_parts.length
+
+        params[:splat] = splat if splat.any?
+        params
+      end
+
+      def match_segment(part, value, params, splat)
+        return :rest if part == '**'
+
+        if part == '*'
+          return :no_match if value.nil?
+
+          splat << value
+        elsif part.start_with?(':')
+          return :no_match if value.nil?
+
+          params[part[1..].to_sym] = value
+        elsif part != value
+          return :no_match
+        end
+
+        :match
       end
     end
   end

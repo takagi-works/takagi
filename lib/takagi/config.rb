@@ -17,9 +17,15 @@ module Takagi
     MiddlewareConfig = Struct.new(:enabled, :stack, keyword_init: true)
     AllocationConfig = Struct.new(:mode, :total_threads, keyword_init: true)
     PluginConfig = Struct.new(:enabled, :auto_discover, keyword_init: true)
+    BlockWiseConfig = Struct.new(
+      :szx, :max_assembled_bytes, :assembly_ttl, :max_concurrent_assemblies, :enabled,
+      keyword_init: true
+    )
 
     attr_accessor :port, :bind_address, :logger, :observability, :auto_migrate, :custom, :processes, :threads,
-                  :protocols, :server_name, :event_bus, :router, :middleware, :allocation, :plugins
+                  :protocols, :server_name, :event_bus, :router, :middleware, :allocation, :plugins,
+                  :block_wise, :max_connections
+    attr_reader :protocol_settings
 
     def initialize
       set_server_defaults
@@ -29,6 +35,7 @@ module Takagi
       set_middleware_defaults
       set_allocation_defaults
       set_plugin_defaults
+      set_block_wise_defaults
       @custom = {}
       @server_name = nil
     end
@@ -61,6 +68,7 @@ module Takagi
       data = load_yaml(path)
 
       apply_basic_settings(data)
+      apply_protocol_settings(data)
       apply_logger(data)
       apply_observability(data)
       apply_event_bus(data)
@@ -68,6 +76,7 @@ module Takagi
       apply_middleware(data)
       apply_allocation(data)
       apply_plugins(data)
+      apply_block_wise(data)
       apply_custom_settings(data)
     end
 
@@ -80,6 +89,7 @@ module Takagi
       assign_setting(data, 'threads') { |value| @threads = value }
       assign_protocols(data['protocols'])
       assign_setting(data, 'server_name') { |value| @server_name = value }
+      assign_setting(data, 'max_connections') { |value| @max_connections = value }
     end
 
     def apply_logger(data)
@@ -148,6 +158,33 @@ module Takagi
       @allocation.total_threads = allocation_data['total_threads'] if allocation_data['total_threads']
     end
 
+    def apply_block_wise(data)
+      block_wise_data = data['block_wise']
+      return unless block_wise_data.is_a?(Hash)
+
+      assign_block_wise_szx(block_wise_data)
+      assign_block_wise_setting(block_wise_data, 'max_assembled_bytes')
+      assign_block_wise_setting(block_wise_data, 'assembly_ttl')
+      assign_block_wise_setting(block_wise_data, 'max_concurrent_assemblies')
+      @block_wise.enabled = block_wise_data['enabled'] if block_wise_data.key?('enabled')
+    end
+
+    def assign_block_wise_szx(block_wise_data)
+      return unless block_wise_data.key?('szx')
+
+      szx = block_wise_data['szx']
+      raise ArgumentError, "Invalid block_wise szx: #{szx.inspect}. Must be between 0 and 6" unless (0..6).cover?(szx)
+
+      @block_wise.szx = szx
+    end
+
+    def assign_block_wise_setting(block_wise_data, key)
+      value = block_wise_data[key]
+      return if value.nil?
+
+      @block_wise.public_send("#{key}=", value)
+    end
+
     def apply_plugins(data)
       plugins_data = data['plugins']
       return unless plugins_data
@@ -193,7 +230,7 @@ module Takagi
       else
         File.open(target.to_s, 'a')
       end
-    rescue StandardError
+    rescue SystemCallError, IOError, ArgumentError
       $stdout
     end
 
@@ -216,6 +253,8 @@ module Takagi
       @threads = 1
       @processes = 1
       @protocols = [:udp]
+      @max_connections = nil
+      @protocol_settings = {}
     end
 
     def set_observability_defaults
@@ -264,11 +303,36 @@ module Takagi
       )
     end
 
+    def set_block_wise_defaults
+      @block_wise = BlockWiseConfig.new(
+        szx: 6,
+        max_assembled_bytes: 1_048_576,
+        assembly_ttl: 30,
+        max_concurrent_assemblies: 64,
+        enabled: true
+      )
+    end
+
     def assign_setting(data, key)
       value = data[key]
       return if value.nil?
 
       yield(value)
+    end
+
+    def apply_protocol_settings(data)
+      settings = data['protocol_settings']
+      return unless settings.is_a?(Hash)
+
+      @protocol_settings = settings.each_with_object({}) do |(proto, cfg), acc|
+        next unless cfg.is_a?(Hash)
+
+        acc[proto.to_sym] = {
+          processes: cfg['processes'],
+          threads: cfg['threads'],
+          max_connections: cfg['max_connections']
+        }.compact
+      end
     end
 
     def assign_processes(data)
@@ -330,7 +394,9 @@ module Takagi
     # Returns an array of middleware configurations
     def default_middleware_stack
       [
-        { name: 'Debugging', options: {} }
+        { name: 'Debugging', options: {} },
+        { name: 'Metrics', options: {} },
+        { name: 'BlockWise', options: {} }
       ]
     end
   end # rubocop:enable Metrics/ClassLength

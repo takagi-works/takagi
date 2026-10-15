@@ -42,4 +42,33 @@ RSpec.describe Takagi::Router do
     expect(entry.metadata).not_to have_key(:obs)
     expect(entry.metadata[:anchor]).to eq('</sensors/temp>')
   end
+
+  it 'matches a single-segment wildcard' do
+    router.get '/files/*' do |_req, params|
+      { splat: params[:splat] }
+    end
+
+    block, params = router.find_route('GET', '/files/readme')
+    expect(block).not_to be_nil
+    expect(params[:splat]).to eq(['readme'])
+  end
+
+  it 'matches a multi-segment wildcard' do
+    router.get '/files/**' do |_req, params|
+      { splat: params[:splat] }
+    end
+
+    block, params = router.find_route('GET', '/files/a/b/c')
+    expect(block).not_to be_nil
+    expect(params[:splat]).to eq(%w[a b c])
+  end
+
+  it 'does not match a single-segment wildcard across segments' do
+    router.get '/files/*' do
+      { ok: true }
+    end
+
+    block, = router.find_route('GET', '/files/a/b')
+    expect(block).to be_nil
+  end
 end

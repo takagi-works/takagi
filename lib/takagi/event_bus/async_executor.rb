@@ -126,18 +126,18 @@ module Takagi
         def shutdown_workers
           @jobs.each do |job|
             Marshal.dump([:shutdown], job.io)
-          rescue StandardError
+          rescue IOError, SystemCallError
             # ignore failures while shutting down
           ensure
             job.io.close unless job.io.closed?
             begin
               Process.kill('TERM', job.pid)
-            rescue StandardError
+            rescue Errno::ESRCH, Errno::EPERM
               nil
             end
             begin
               Process.waitpid(job.pid)
-            rescue StandardError
+            rescue Errno::ECHILD
               nil
             end
           end
@@ -219,12 +219,12 @@ module Takagi
           old = @jobs[index]
           begin
             old.io.close unless old.io.closed?
-          rescue StandardError
+          rescue IOError, SystemCallError
             nil
           end
           begin
             Process.waitpid(old.pid)
-          rescue StandardError
+          rescue Errno::ECHILD
             nil
           end
           @jobs[index] = fork_worker(index)

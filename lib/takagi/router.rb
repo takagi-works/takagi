@@ -60,6 +60,12 @@ module Takagi
         @attribute_set.apply!
       end
 
+      def with_path(new_path)
+        copy = dup
+        copy.instance_variable_set(:@path, new_path)
+        copy
+      end
+
       # Support for dup operation (used in discovery)
       def initialize_copy(original)
         super
@@ -224,6 +230,14 @@ module Takagi
       @routes_mutex.synchronize do
         @routes.values.reject { |entry| entry.metadata[:discovery] }.map(&:dup)
       end
+    end
+
+    def route_count
+      @routes_mutex.synchronize { @routes.size }
+    end
+
+    def route_entries
+      @routes_mutex.synchronize { @routes.values }
     end
 
     # Applies CoRE metadata outside the request cycle. Useful for boot time

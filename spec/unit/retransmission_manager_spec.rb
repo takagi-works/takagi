@@ -19,6 +19,11 @@ RSpec.describe Takagi::Message::RetransmissionManager do
     manager.stop if manager.instance_variable_get(:@running)
   end
 
+  def datagram(type:, code:, message_id: 12_345, token: ''.b)
+    type_bits = { con: 0, non: 1, ack: 2, rst: 3 }.fetch(type)
+    [(0x40 | (type_bits << 4) | token.bytesize), code, message_id].pack('CCn') + token
+  end
+
   describe '#initialize' do
     it 'initializes with empty pending transmissions' do
       expect(manager.stats[:pending_count]).to eq(0)
@@ -96,6 +101,43 @@ RSpec.describe Takagi::Message::RetransmissionManager do
 
     it 'does nothing if message_id not found' do
       expect { manager.handle_response(99_999, 'response') }.not_to raise_error
+    end
+
+    it 'cancels the transmission on an Acknowledgement of the request' do
+      manager.send_confirmable(message_id, message_data, socket, host, port)
+
+      manager.handle_response(message_id, datagram(type: :ack, code: 0x45))
+
+      expect(manager.stats[:pending_count]).to eq(0)
+    end
+
+    it 'cancels the transmission on a Reset of the request and hands it back' do
+      answer = nil
+      manager.send_confirmable(message_id, message_data, socket, host, port) { |resp, _err| answer = resp }
+      reset = datagram(type: :rst, code: 0x00)
+
+      manager.handle_response(message_id, reset)
+
+      expect(manager.stats[:pending_count]).to eq(0)
+      expect(answer).to eq(reset)
+    end
+
+    it 'cancels the transmission on an Empty Acknowledgement without handing it back' do
+      answer = nil
+      manager.send_confirmable(message_id, message_data, socket, host, port) { |resp, _err| answer = resp }
+
+      manager.handle_response(message_id, datagram(type: :ack, code: 0x00))
+
+      expect(manager.stats[:pending_count]).to eq(0)
+      expect(answer).to be_nil
+    end
+
+    it 'keeps the transmission pending for a datagram that is neither an Acknowledgement nor a Reset' do
+      manager.send_confirmable(message_id, message_data, socket, host, port)
+
+      manager.handle_response(message_id, datagram(type: :non, code: 0x45))
+
+      expect(manager.stats[:pending_count]).to eq(1)
     end
   end
 

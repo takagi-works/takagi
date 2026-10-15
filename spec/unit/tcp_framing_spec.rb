@@ -10,91 +10,92 @@ RSpec.describe Takagi::Server::Tcp do
     instance
   end
 
-  describe '#encode_tcp_frame' do
-    def decoded_length(frame)
-      len = frame.getbyte(0) >> 4
-
-      case len
-      when 0..12
-        len
-      when 13
-        13 + frame.getbyte(1)
-      when 14
-        269 + frame.byteslice(1, 2).unpack1('n')
-      else
-        65_805 + frame.byteslice(1, 4).unpack1('N')
-      end
+  class FakeSocket
+    def initialize(payload)
+      @io = StringIO.new(payload)
     end
 
-    it 'encodes short messages with accurate length' do
-      message = server.send(:build_csm_message)
-      serialized = message.to_bytes(transport: :tcp)
-      frame = server.send(:encode_tcp_frame, serialized)
-
-      # Current implementation: Length = Options + Payload
-      # serialized format: first_byte(1) + code(1) + token(tkl) + options + payload
-      first_byte = serialized.getbyte(0)
-      tkl = first_byte & 0x0F
-      expected_length = serialized.bytesize - 1 - 1 - tkl # total - first_byte - code - token
-
-      expect(decoded_length(frame)).to eq(expected_length)
-      expect(frame.getbyte(0) & 0x0F).to eq(0) # token length unchanged
+    def read(length)
+      @io.read(length)
     end
 
-    it 'encodes extended length messages without truncation' do
-      outbound = Takagi::Message::Outbound.new(
-        code: Takagi::CoAP::Registries::Response::CONTENT,
-        payload: { temperature: 21 },
-        token: "\x01\x02",
-        options: { Takagi::CoAP::Registries::Option::CONTENT_FORMAT => Takagi::Router::DEFAULT_CONTENT_FORMAT },
-        transport: :tcp
-      )
+    def readpartial(length)
+      chunk = @io.read(length)
+      raise EOFError if chunk.nil?
 
-      serialized = outbound.to_bytes(transport: :tcp)
-      frame = server.send(:encode_tcp_frame, serialized)
+      chunk
+    end
 
-      # Current implementation: Length = Options + Payload
-      first_byte = serialized.getbyte(0)
-      tkl = first_byte & 0x0F
-      expected_length = serialized.bytesize - 1 - 1 - tkl # total - first_byte - code - token
-
-      expect(decoded_length(frame)).to eq(expected_length)
-      expect(frame.getbyte(0) & 0x0F).to eq(2)
+    def nread
+      @io.size - @io.pos
     end
   end
 
-  describe '#read_request' do
-    class FakeSocket
-      def initialize(payload)
-        @io = StringIO.new(payload)
-      end
-
-      def read(length)
-        @io.read(length)
-      end
-
-      def readpartial(length)
-        chunk = @io.read(length)
-        raise EOFError if chunk.nil?
-
-        chunk
-      end
-
-      def nread
-        @io.size - @io.pos
-      end
-    end
-
-    it 'parses framed CSM packets without losing the header byte' do
+  describe 'TCP framing (live path)' do
+    it 'round-trips a CSM message through the live framer and reader' do
       message = server.send(:build_csm_message)
-      frame = server.send(:encode_tcp_frame, message.to_bytes(transport: :tcp))
-      socket = FakeSocket.new(frame)
+      frame = Takagi::Network::Framing::Tcp.encode(message)
 
-      inbound = server.send(:read_request, socket)
+      inbound = server.send(:read_request, FakeSocket.new(frame))
 
       expect(inbound.code).to eq(Takagi::CoAP::Registries::Signaling::CSM)
       expect(inbound.token).to eq(''.b)
-      expect(inbound.options.keys).to include(2, 4)
+      expect(inbound.options.keys).to include(2)
+      expect(inbound.options.keys).not_to include(4)
+    end
+
+    it 'round-trips an extended-length payload' do
+      outbound = Takagi::Message::Outbound.new(
+        code: Takagi::CoAP::Registries::Response::CONTENT,
+        payload: { temperature: 21, note: 'x' * 300 },
+        token: "\x01\x02".b,
+        options: { Takagi::CoAP::Registries::Option::CONTENT_FORMAT => Takagi::Router::DEFAULT_CONTENT_FORMAT },
+        transport: :tcp
+      )
+      frame = Takagi::Network::Framing::Tcp.encode(outbound)
+
+      inbound = server.send(:read_request, FakeSocket.new(frame))
+
+      expect(inbound.code).to eq(Takagi::CoAP::Registries::Response::CONTENT)
+      expect(inbound.token).to eq("\x01\x02".b)
+      expect(inbound.payload).to include('temperature')
+    end
+  end
+
+  describe Takagi::Network::Framing::Tcp do
+    def frame_with_declared_length(declared, body: nil)
+      header = [15 << 4].pack('C') + [declared - 65_805].pack('N')
+      header + "\x45".b + (body || ("\xFF".b + ('a' * (declared - 1))))
+    end
+
+    it 'derives the maximum from the Max-Message-Size the server advertises' do
+      tcp_server = Takagi::Server::Tcp.allocate
+      tcp_server.instance_variable_set(:@logger, Takagi.logger)
+      advertised = tcp_server.send(:build_csm_message).options[2].first
+
+      expect(described_class::MAX_MESSAGE_SIZE).to eq(advertised)
+    end
+
+    it 'refuses a frame declaring a length above the maximum without reading the body' do
+      declared = described_class::MAX_FRAME_LENGTH + 1
+      socket = FakeSocket.new(frame_with_declared_length(declared, body: ''.b))
+      requested = []
+      allow(socket).to receive(:readpartial).and_wrap_original do |original, length|
+        requested << length
+        original.call(length)
+      end
+
+      expect(described_class.read_from_socket(socket)).to be_nil
+      expect(requested).to be_empty
+    end
+
+    it 'reads a frame declaring a length just below the maximum' do
+      declared = described_class::MAX_FRAME_LENGTH - 1
+      frame = frame_with_declared_length(declared)
+
+      result = described_class.read_from_socket(FakeSocket.new(frame))
+
+      expect(result).to eq(frame.byteslice(0, 1) + frame.byteslice(5, frame.bytesize - 5))
     end
   end
 end

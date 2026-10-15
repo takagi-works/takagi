@@ -1,15 +1,31 @@
 # frozen_string_literal: true
 
+require_relative 'udp'
+
 module Takagi
   module Network
     module Framing
       # RFC 8323 CoAP over TCP framing with variable-length encoding
       module Tcp
+        MAX_MESSAGE_SIZE = 8_388_864
+        MAX_TOKEN_LENGTH = 8
+        FRAMING_OVERHEAD = 1 + 4 + 1 + MAX_TOKEN_LENGTH
+        MAX_FRAME_LENGTH = MAX_MESSAGE_SIZE + FRAMING_OVERHEAD
+
+        def self.bounded_length(length, logger)
+          return length if length <= MAX_FRAME_LENGTH
+
+          logger&.debug "read_length: declared length #{length} exceeds the maximum #{MAX_FRAME_LENGTH}; refusing frame"
+          nil
+        end
+
         class << self
           # Encode message with RFC 8323 framing
           # @param message [Message::Outbound] Message to encode
           # @return [String] Framed binary data
+          # @raise [EmptyMessageError] when an Empty or Reset message carries data
           def encode(message)
+            verify_message_shape!(message)
             # Build base message
             packet = build_base_message(message)
             # Add RFC 8323 framing
@@ -72,6 +88,13 @@ module Takagi
 
           private
 
+          def verify_message_shape!(message)
+            return unless message.code.zero? || message.type == CoAP::Registries::MessageType::RST
+            return if message.code.zero? && message.token.empty? && message.options.empty? && message.payload.to_s.empty?
+
+            raise EmptyMessageError, 'Empty (0.00) and Reset messages carry only the bare header (RFC 7252 4.1/4.2)'
+          end
+
           # Build base TCP message (before framing)
           def build_base_message(message)
             token_length = message.token.bytesize
@@ -84,14 +107,14 @@ module Takagi
             packet.b
           end
 
-          # Add RFC 8323 §3.3 variable-length framing
+          # Add RFC 8323 §3.2 variable-length framing
           def frame(data)
             return ''.b if data.empty?
 
             first_byte = data.getbyte(0)
             tkl = first_byte & 0x0F
 
-            # RFC 8323 §3.3: Length = size of (Options + Payload)
+            # RFC 8323 §3.2: Length = size of (Options + Payload)
             # data: first_byte(1) + code(1) + token(tkl) + options + payload
             code_size = 1
             payload_length = [data.bytesize - 1 - code_size - tkl, 0].max
@@ -120,28 +143,28 @@ module Takagi
           def read_length(socket, len_nibble, logger: nil)
             case len_nibble
             when 0..12
-              len_nibble
+              bounded_length(len_nibble, logger)
             when 13
               ext = socket.read(1)
               return nil unless ext
 
               ext_value = ext.unpack1('C')
               logger&.debug "read_length: extended length byte=0x#{ext_value.to_s(16)}"
-              ext_value + 13
+              bounded_length(ext_value + 13, logger)
             when 14
               ext = socket.read(2)
               return nil unless ext
 
               ext_value = ext.unpack1('n')
               logger&.debug "read_length: extended length bytes=0x#{ext_value.to_s(16)}"
-              ext_value + 269
+              bounded_length(ext_value + 269, logger)
             when 15
               ext = socket.read(4)
               return nil unless ext
 
               ext_value = ext.unpack1('N')
               logger&.debug "read_length: extended length bytes=0x#{ext_value.to_s(16)}"
-              ext_value + 65_805
+              bounded_length(ext_value + 65_805, logger)
             end
           end
 

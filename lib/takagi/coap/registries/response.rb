@@ -25,6 +25,7 @@ module Takagi
         register(67, '2.03 Valid', :valid, rfc: 'RFC 7252 §5.9.1.3')
         register(68, '2.04 Changed', :changed, rfc: 'RFC 7252 §5.9.1.4')
         register(69, '2.05 Content', :content, rfc: 'RFC 7252 §5.9.1.5')
+        register(95, '2.31 Continue', :continue, rfc: 'RFC 7959 §2.9.1')
 
         # Client Error 4.xx (RFC 7252 §5.9.2)
         register(128, '4.00 Bad Request', :bad_request, rfc: 'RFC 7252 §5.9.2.1')
@@ -35,6 +36,7 @@ module Takagi
         register(133, '4.05 Method Not Allowed', :method_not_allowed, rfc: 'RFC 7252 §5.9.2.6')
         register(134, '4.06 Not Acceptable', :not_acceptable, rfc: 'RFC 7252 §5.9.2.7')
         register(140, '4.12 Precondition Failed', :precondition_failed, rfc: 'RFC 7252 §5.9.2.9')
+        register(136, '4.08 Request Entity Incomplete', :request_entity_incomplete, rfc: 'RFC 7959 §2.9.2')
         register(141, '4.13 Request Entity Too Large', :request_entity_too_large, rfc: 'RFC 7252 §5.9.2.10')
         register(143, '4.15 Unsupported Content-Format', :unsupported_content_format, rfc: 'RFC 7252 §5.9.2.11')
 

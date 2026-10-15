@@ -78,6 +78,20 @@ RSpec.describe Takagi::CBOR::Encoder do
       expect(described_class.encode(nil)).to eq("\xF6".b)
     end
 
+    it 'encodes a binary string as a byte string' do
+      result = described_class.encode("\x01\x02\xFF".b)
+      expect(result).to eq("\x43\x01\x02\xFF".b)
+    end
+
+    it 'still encodes UTF-8 strings as text strings' do
+      expect(described_class.encode('hi')).to eq("\x62hi".b)
+    end
+
+    it 'round-trips a byte string through the decoder' do
+      bytes = "\x00\xFF\x10".b
+      expect(Takagi::CBOR::Decoder.decode(described_class.encode(bytes))).to eq(bytes)
+    end
+
     it 'encodes floats as 64-bit IEEE 754' do
       result = described_class.encode(1.5)
       expect(result[0].ord).to eq(0xFB) # Major type 7, float64

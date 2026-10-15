@@ -30,37 +30,13 @@ RSpec.describe 'Takagi Multi Protocol Server' do
   end
 
   def read_tcp_message(socket)
-    socket.setsockopt(Socket::SOL_SOCKET, Socket::SO_RCVTIMEO, [5, 0].pack('l_2'))
+    loop do
+      return nil unless socket.wait_readable(5)
 
-    first_byte_data = socket.read(1)
-    return nil if first_byte_data.nil? || first_byte_data.empty?
-
-    first_byte = first_byte_data.unpack1('C')
-    len_nibble = (first_byte >> 4) & 0x0F
-    tkl = first_byte & 0x0F
-
-    length = case len_nibble
-             when 0..12
-               len_nibble
-             when 13
-               ext = socket.read(1)
-               return nil unless ext
-               ext.unpack1('C') + 13
-             when 14
-               ext = socket.read(2)
-               return nil unless ext
-               ext.unpack1('n') + 269
-             when 15
-               ext = socket.read(4)
-               return nil unless ext
-               ext.unpack1('N') + 65_805
-             end
-
-    bytes_to_read = 1 + tkl + length
-    data = socket.read(bytes_to_read)
-    return nil unless data
-
-    first_byte_data + data
+      raw = Takagi::Network::Framing::Tcp.read_from_socket(socket)
+      return nil unless raw
+      return raw unless Takagi::CoAP::Registries::Signaling.signaling?(raw.getbyte(1))
+    end
   end
 
   it 'handles requests over both UDP and TCP' do

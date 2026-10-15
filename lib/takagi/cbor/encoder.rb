@@ -54,7 +54,6 @@ module Takagi
       TYPE_HANDLERS = {
         Integer => :encode_integer,
         Float => :encode_float,
-        String => :encode_string,
         Array => :encode_array,
         Hash => :encode_map,
         TrueClass => :encode_simple,
@@ -102,12 +101,18 @@ module Takagi
 
       def handler_for(obj)
         return :encode_symbol if obj.is_a?(Symbol)
+        return :encode_byte_string if binary_string?(obj)
+        return :encode_string if obj.is_a?(String)
 
         TYPE_HANDLERS.each do |klass, method|
           return method if obj.is_a?(klass)
         end
 
         raise EncodeError, "Cannot encode #{obj.class}: #{obj.inspect}"
+      end
+
+      def binary_string?(obj)
+        obj.is_a?(String) && (obj.encoding == Encoding::BINARY || !obj.valid_encoding?)
       end
 
       def encode_symbol(symbol)
@@ -163,12 +168,9 @@ module Takagi
         encode_with_length(MAJOR_TYPE_TEXT_STRING, byte_length) + utf8_str
       end
 
-      # Encode byte string (major type 2)
-      # RFC 8949 §3.1
       def encode_byte_string(bytes)
-        byte_length = bytes.bytesize
-
-        encode_with_length(MAJOR_TYPE_BYTE_STRING, byte_length) + bytes
+        binary = bytes.b
+        encode_with_length(MAJOR_TYPE_BYTE_STRING, binary.bytesize) + binary
       end
 
       # Encode array (major type 4)

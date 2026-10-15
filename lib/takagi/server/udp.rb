@@ -8,6 +8,8 @@ module Takagi
   module Server
     # UDP server for handling CoAP messages
     class Udp
+      attr_reader :worker_pids
+
       def initialize(port: 5683, worker_processes: 2, worker_threads: 2,
                      middleware_stack: nil, router: nil, logger: nil, watcher: nil)
         @port = port
@@ -62,7 +64,6 @@ module Takagi
           @server_thread.join(5) # Wait up to 5 seconds
         end
 
-        exit(0) unless test_environment?
         Takagi::Hooks.emit(:server_stopped, protocol: :udp, port: @port)
       end
 
@@ -75,9 +76,10 @@ module Takagi
       end
 
       def spawn_workers
-        @worker_pids = Array.new(@worker_processes) do
+        @worker_pids = []
+        @worker_processes.times do
           @logger.debug "process with #{@router.all_routes}"
-          fork_worker
+          @worker_pids << fork_worker
         end
       end
 
@@ -104,7 +106,7 @@ module Takagi
         return unless @socket && !@socket.closed?
 
         @socket.close
-      rescue StandardError
+      rescue IOError, SystemCallError
         nil
       end
 
@@ -117,22 +119,24 @@ module Takagi
           # worker already exited
         end
 
-        # Give workers a moment to shut down gracefully
         deadline = Time.now + 2
         @worker_pids.each do |pid|
           begin
             timeout = [deadline - Time.now, 0].max
-            Timeout.timeout(timeout) do
-              Process.wait(pid)
-            end
-          rescue Timeout::Error, Errno::ECHILD, Errno::ESRCH
-            # Worker didn't exit in time or already exited
+            Timeout.timeout(timeout) { Process.wait(pid) }
+          rescue Timeout::Error
+            force_kill(pid)
+          rescue Errno::ECHILD, Errno::ESRCH
+            nil
           end
         end
       end
 
-      def test_environment?
-        ENV['RACK_ENV'] == 'test' || defined?(RSpec)
+      def force_kill(pid)
+        Process.kill('KILL', pid)
+        Process.wait(pid)
+      rescue Errno::ESRCH, Errno::ECHILD
+        nil
       end
     end
   end

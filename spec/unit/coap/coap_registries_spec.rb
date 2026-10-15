@@ -42,6 +42,13 @@ RSpec.describe 'CoAP Registries' do
       expect(Takagi::CoAP::Registries::Response.name_for(132)).to eq('4.04 Not Found')
     end
 
+    it 'provides RFC 7959 response constants' do
+      expect(Takagi::CoAP::Registries::Response::CONTINUE).to eq(95)
+      expect(Takagi::CoAP::Registries::Response::REQUEST_ENTITY_INCOMPLETE).to eq(136)
+      expect(Takagi::CoAP::Registries::Response.name_for(95)).to eq('2.31 Continue')
+      expect(Takagi::CoAP::Registries::Response.name_for(136)).to eq('4.08 Request Entity Incomplete')
+    end
+
     it 'identifies success codes' do
       expect(Takagi::CoAP::Registries::Response.success?(69)).to be true
       expect(Takagi::CoAP::Registries::Response.success?(132)).to be false
@@ -84,6 +91,15 @@ RSpec.describe 'CoAP Registries' do
     it 'provides option names' do
       expect(Takagi::CoAP::Registries::Option.name_for(11)).to eq('Uri-Path')
       expect(Takagi::CoAP::Registries::Option.name_for(12)).to eq('Content-Format')
+    end
+
+    it 'provides RFC 7959 option constants' do
+      expect(Takagi::CoAP::Registries::Option::BLOCK1).to eq(27)
+      expect(Takagi::CoAP::Registries::Option::BLOCK2).to eq(23)
+      expect(Takagi::CoAP::Registries::Option::SIZE2).to eq(28)
+      expect(Takagi::CoAP::Registries::Option.name_for(27)).to eq('Block1')
+      expect(Takagi::CoAP::Registries::Option.name_for(23)).to eq('Block2')
+      expect(Takagi::CoAP::Registries::Option.name_for(28)).to eq('Size2')
     end
 
     it 'identifies critical options' do
