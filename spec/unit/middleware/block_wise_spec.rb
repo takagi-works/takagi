@@ -422,11 +422,10 @@ RSpec.describe Takagi::Middleware::BlockWise do
       Takagi.config.middleware.stack = [{ name: 'BlockWise', options: {} }]
       Takagi.config.block_wise.max_assembled_bytes = @cap
       Takagi::MiddlewareStack.instance.reset!
-      port = find_free_port
-      @server = Takagi::Server::Udp.new(port: port, worker_processes: 1, worker_threads: 1)
+      @server = Takagi::Server::Udp.new(port: 0, worker_processes: 1, worker_threads: 1)
       @server_thread = Thread.new { @server.run! }
       @socket = UDPSocket.new
-      @address = ['127.0.0.1', port]
+      @address = ['127.0.0.1', bound_port_of(@server)]
       @server
     end
 

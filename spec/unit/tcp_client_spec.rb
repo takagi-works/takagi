@@ -5,8 +5,8 @@ require 'json'
 
 RSpec.describe Takagi::TcpClient do
   def with_tcp_server
-    port = find_free_port
-    server = Takagi::Base.spawn!(port: port, protocols: [:tcp])
+    server = Takagi::Base.spawn!(port: 0, protocols: [:tcp])
+    port = bound_port_of(server)
     client = described_class.new("coap+tcp://127.0.0.1:#{port}", timeout: 10)
     yield(client)
   ensure
@@ -15,8 +15,8 @@ RSpec.describe Takagi::TcpClient do
   end
 
   it 'sends request and receives response over TCP' do
-    port = find_free_port
-    server = Takagi::Base.spawn!(port: port, protocols: [:tcp])
+    server = Takagi::Base.spawn!(port: 0, protocols: [:tcp])
+    port = bound_port_of(server)
     client = described_class.new("coap+tcp://127.0.0.1:#{port}")
 
     response = nil

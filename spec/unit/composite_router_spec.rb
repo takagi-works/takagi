@@ -6,8 +6,11 @@ RSpec.describe Takagi::CompositeRouter do
   after do
     Object.send(:remove_const, :TelemetryController) if defined?(TelemetryController)
     Object.send(:remove_const, :ConfigController) if defined?(ConfigController)
+    Object.send(:remove_const, :NestedApiController) if defined?(NestedApiController)
+    Object.send(:remove_const, :NestedDevicesController) if defined?(NestedDevicesController)
+    # Hand back the foreign `ApiController` the discovery spec leaves behind (see the comment on
+    # the nested controllers example). Absent in a run where that spec never ran, hence the guard.
     Object.send(:remove_const, :ApiController) if defined?(ApiController)
-    Object.send(:remove_const, :DevicesController) if defined?(DevicesController)
   end
 
   describe '#mount' do
@@ -122,14 +125,24 @@ RSpec.describe Takagi::CompositeRouter do
   end
 
   describe 'nested controllers' do
+    # The controller classes are named for this spec only. `class ApiController` REOPENS an existing
+    # `ApiController` constant, and spec/integration/discovery_with_controllers_spec.rb leaves one
+    # behind: its nested-controller example nests SensorsController under its own `ApiController`
+    # while its `after` hook (that file, lines 4-8) clears TelemetryController, ConfigController and
+    # TestApp only. A reopened class keeps the `config[:nested_controllers]` array the earlier `nest`
+    # wrote, so `nest NestedDevicesController` below would append to `[SensorsController]` instead of
+    # starting an empty list (Controller::ConfigContext#nest, lib/takagi/controller.rb:281,
+    # `concat`s into the class-level array), and CompositeRouter#mount would then register the
+    # top-level mount plus TWO nested ones - 3 - making this example depend on run order. A name no
+    # other spec defines cannot be reopened, so the count below is 2 whatever ran before.
     it 'mounts nested controllers automatically' do
-      class ApiController < Takagi::Controller
+      class NestedApiController < Takagi::Controller
         configure do
           mount '/api'
         end
       end
 
-      class DevicesController < Takagi::Controller
+      class NestedDevicesController < Takagi::Controller
         configure do
           mount '/devices'
         end
@@ -140,11 +153,11 @@ RSpec.describe Takagi::CompositeRouter do
       end
 
       # Nest device under API
-      ApiController.configure do
-        nest DevicesController
+      NestedApiController.configure do
+        nest NestedDevicesController
       end
 
-      router.mount(ApiController)
+      router.mount(NestedApiController)
 
       # Should have both controllers mounted
       expect(router.mounted_controllers.length).to eq(2)

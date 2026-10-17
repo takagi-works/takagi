@@ -80,6 +80,144 @@ RSpec.describe Takagi::Config do
     end
   end
 
+  # Row 8 of .omo/plans/tcp-multi-worker.md: parsing is shape-only. Whether a written
+  # per-protocol key can apply to its target is checked where the servers are built
+  # (`ServerLifecycle#build_servers`), because that is where the value would be handed over.
+  describe 'protocol_settings applicability' do
+    it 'parses a per-protocol key its target cannot apply, leaving the rejection to the boot' do
+      write_config <<~YAML
+        protocol_settings:
+          udp:
+            max_connections: 4
+      YAML
+
+      expect(config.protocol_settings[:udp]).to eq(max_connections: 4)
+    end
+
+    it 'keeps a per-protocol key that does apply to its target unchanged' do
+      write_config <<~YAML
+        protocol_settings:
+          tcp:
+            threads: 4
+            max_connections: 16
+      YAML
+
+      expect(config.protocol_settings[:tcp]).to eq(threads: 4, max_connections: 16)
+    end
+  end
+
+  # Row 20 of .omo/plans/tcp-multi-worker.md: the global-`threads` warning keys off whether the
+  # key was WRITTEN, not off the value it happens to hold, so Config carries written-key presence.
+  # A YAML key and a programmatic assignment both count; the defaults `set_server_defaults`
+  # assigns directly never do.
+  describe 'written-key presence' do
+    it 'reports a written global threads key whatever its value (PROOF, row 20)' do
+      write_config "threads: 1\n"
+
+      expect(config.written?(:threads)).to be(true)
+    end
+
+    it 'does not report a key the YAML never wrote (PROOF, row 20)' do
+      write_config "port: 5683\n"
+
+      expect(config.written?(:threads)).to be(false)
+    end
+
+    it 'does not report the untouched default (GUARD, row 20)' do
+      expect(described_class.new.written?(:threads)).to be(false)
+    end
+
+    it 'reports a programmatic assignment, so no written count goes unreported (GUARD, row 20)' do
+      config.threads = 4
+
+      expect(config.written?(:threads)).to be(true)
+    end
+
+    # Row 29 of .omo/plans/tcp-multi-worker.md: `processes=` records presence exactly like
+    # `threads=` now. It used to be a bare `attr_accessor`, so a programmatic write of a global
+    # count a TCP target cannot consume was accepted in silence, while the same key written in
+    # YAML was reported.
+    it 'reports a programmatic processes assignment too (PROOF, row 29)' do
+      config.processes = 1
+
+      expect(config.written?(:processes)).to be(true)
+      expect(config.processes).to eq(1)
+    end
+
+    it 'still leaves the untouched processes default unreported (GUARD, row 29)' do
+      expect(described_class.new.written?(:processes)).to be(false)
+    end
+
+    it 'still carries the written value into the reader unchanged (GUARD, row 20)' do
+      write_config "threads: 6\n"
+
+      expect(config.threads).to eq(6)
+    end
+  end
+
+  # Row 23 of .omo/plans/tcp-multi-worker.md: presence is carrier state that the boot warnings
+  # read, so a process that assigns a value and restores it must be able to put the presence back
+  # as well - `reset_written_keys!` is that API. Without it the suite's order-independence rested
+  # on stubbing `written?` away, which is a mask rather than a property.
+  describe 'resetting written-key presence (row 23)' do
+    it 'forgets presence so a restored value cannot be reported as written (PROOF)' do
+      config.threads = 2
+      config.threads = 1 # restores the VALUE only, which is what a spec's teardown does today
+      expect(config.written?(:threads)).to be(true)
+
+      config.reset_written_keys!
+
+      expect(config.written?(:threads)).to be(false)
+    end
+
+    it 'forgets the processes presence the YAML path records too (PROOF, row 24)' do
+      write_config "processes: 4\n"
+      expect(config.written?(:processes)).to be(true)
+
+      config.reset_written_keys!
+
+      expect(config.written?(:processes)).to be(false)
+    end
+
+    it 'leaves the values it carries untouched (GUARD)' do
+      write_config "processes: 4\nthreads: 6\n"
+
+      config.reset_written_keys!
+
+      expect(config.processes).to eq(4)
+      expect(config.threads).to eq(6)
+    end
+  end
+
+  # Row 24 of .omo/plans/tcp-multi-worker.md: `processes` reaches the presence carrier through
+  # its own assignment path (`assign_processes`, which bypasses `assign_setting`) and through the
+  # legacy `process` alias, so presence must be recorded on both keys' write.
+  describe 'processes presence through the YAML path (row 24)' do
+    it 'reports the processes key whatever its value, including the default (PROOF)' do
+      write_config "processes: 1\n"
+
+      expect(config.written?(:processes)).to be(true)
+      expect(config.processes).to eq(1)
+    end
+
+    it 'reports the legacy process alias as a written count too (PROOF)' do
+      write_config "process: 3\n"
+
+      expect(config.written?(:processes)).to be(true)
+      expect(config.processes).to eq(3)
+    end
+
+    it 'does not report a key the YAML never wrote (GUARD)' do
+      write_config "port: 5683\n"
+
+      expect(config.written?(:processes)).to be(false)
+    end
+
+    it 'does not report the untouched default (GUARD)' do
+      expect(described_class.new.written?(:processes)).to be(false)
+    end
+  end
+
   describe 'block-wise settings' do
     it 'defaults to safe block-wise values' do
       expect(config.block_wise.szx).to eq(6)

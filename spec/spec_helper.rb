@@ -20,14 +20,39 @@ end
 
 require "takagi"
 
-def find_free_port
-  return (ENV['RSPEC_DEFAULT_PORT'] || 5683).to_i if ENV['RSPEC_DISABLE_UDP']
-
+# Race-free port acquisition (row 25 of .omo/plans/tcp-multi-worker.md).
+#
+# `find_free_port` used to bind a UDP socket, CLOSE it and hand the bare number back, so a
+# caller that bound afterwards could lose the port to anything else on the box - the
+# `Errno::EADDRINUSE` flake registered as row 18. No number can be handed out safely: the port
+# is free the moment the probe socket closes. So the helper hands out the SOCKET that keeps the
+# port bound instead, and the port cannot leave the caller's hands while that socket is open.
+# Specs that need their own SERVER do not use this at all - they bind `port: 0` and read the
+# earned port back off the server's own socket, which holds it from creation.
+#
+# `RSPEC_DISABLE_UDP` keeps its historical meaning: environments that disable ephemeral probing
+# get the fixed port (`RSPEC_DEFAULT_PORT`, else 5683) instead of a kernel-chosen one.
+def free_port_socket
   socket = UDPSocket.new
-  socket.bind("127.0.0.1", 0)
-  port = socket.addr[1]
-  socket.close
-  port
+  socket.bind('127.0.0.1', free_port_fixed_port || 0)
+  socket
+end
+
+# The historical fixed port, kept for the environments that disable ephemeral probing
+# (`RSPEC_DISABLE_UDP`); nil means "let the kernel choose".
+def free_port_fixed_port
+  return nil unless ENV['RSPEC_DISABLE_UDP']
+
+  (ENV['RSPEC_DEFAULT_PORT'] || 5683).to_i
+end
+
+# The port a spawned server actually bound, read off the socket that holds it: `port: 0` lets
+# the kernel choose, so the socket is the only honest source (row 25 of
+# .omo/plans/tcp-multi-worker.md). A TCP server keeps its listener in `@server`, a UDP server
+# its socket in `@socket`.
+def bound_port_of(server)
+  socket = server.instance_variable_get(:@server) || server.instance_variable_get(:@socket)
+  socket.addr[1]
 end
 
 RSpec.configure do |config|

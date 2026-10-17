@@ -214,8 +214,8 @@ RSpec.describe Takagi::Server::UdpWorker do
 
   describe 'wire level' do
     it 'answers a raw Empty CON with 70 00 <message id>' do
-      port = find_free_port
-      server = Takagi::Base.spawn!(port: port, protocols: [:udp])
+      server = Takagi::Base.spawn!(port: 0, protocols: [:udp])
+      port = bound_port_of(server)
       socket = UDPSocket.new
       begin
         expect(await_server(socket, port)).to include('Pong')
@@ -232,8 +232,8 @@ RSpec.describe Takagi::Server::UdpWorker do
     end
 
     it 'ignores a short datagram and still answers the next request' do
-      port = find_free_port
-      server = Takagi::Base.spawn!(port: port, protocols: [:udp])
+      server = Takagi::Base.spawn!(port: 0, protocols: [:udp])
+      port = bound_port_of(server)
       socket = UDPSocket.new
       begin
         expect(await_server(socket, port)).to include('Pong')

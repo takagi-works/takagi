@@ -45,8 +45,14 @@ RSpec.describe 'Takagi TCP signalling dispatch' do
   end
 
   before do
-    @port = find_free_port
-    @server = Takagi::Base.spawn!(port: @port, protocols: [:tcp])
+    # ROW 18: bind port 0 HERE and read back the real port. `find_free_port`
+    # (spec/spec_helper.rb) probes with a UDP socket, closes it and returns the NUMBER,
+    # so the port is neither known to be free for TCP nor held between the probe and this
+    # hook's bind - the registered EADDRINUSE flake (1 in 7 full-suite runs). Binding 0
+    # lets the kernel pick the number AND hold it in this process from `initialize`
+    # onwards, so no competing bind can take it.
+    @server = Takagi::Base.spawn!(port: 0, protocols: [:tcp])
+    @port = @server.instance_variable_get(:@server).addr[1]
     @sock = TCPSocket.new('127.0.0.1', @port)
     @csm_raw = read_frame(@sock, timeout: 3)
   end

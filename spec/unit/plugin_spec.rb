@@ -3,9 +3,24 @@
 require 'spec_helper'
 
 RSpec.describe Takagi::Plugin do
+  # Resetting the global router keeps one example's plugin routes out of the next one, but the
+  # reset REPLACES the instance every other consumer already holds: `MiddlewareStack` caches
+  # `Takagi::Router.instance` when the singleton is built (lib/takagi/middleware_stack.rb:33) and
+  # every `Takagi::Base` subclass memoizes its own `router` (lib/takagi/base.rb:47). A bare reset
+  # therefore leaves the suite serving through a router nothing can register into, so any later
+  # example that registers a route at RUN time - the forked child of
+  # spec/rfc/rfc_7641_observe_spec.rb:165 is one - is answered with `4.04 {"error":"not found"}`
+  # (lib/takagi/middleware_stack.rb:79). Keep the isolation and hand the globals back.
   before do
     Takagi::Plugin.registry.clear
+    @global_router_before_reset = Takagi::Router.instance
+    @base_router_before_reset = Takagi::Base.instance_variable_get(:@router)
     Takagi::Router.reset!
+  end
+
+  after do
+    Takagi::Router.instance_variable_set(:@instance, @global_router_before_reset)
+    Takagi::Base.instance_variable_set(:@router, @base_router_before_reset)
   end
 
   let(:app_class) { Class.new(Takagi::Base) }

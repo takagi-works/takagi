@@ -147,8 +147,8 @@ RSpec.describe Takagi::Client do
 
   describe 'block-wise transfer through the unified client' do
     def with_server(scheme, protocol)
-      port = find_free_port
-      server = Takagi::Base.spawn!(port: port, protocols: [protocol])
+      server = Takagi::Base.spawn!(port: 0, protocols: [protocol])
+      port = bound_port_of(server)
       client = described_class.new("#{scheme}://127.0.0.1:#{port}", protocol: protocol, timeout: 10)
       yield(client)
     ensure
@@ -197,8 +197,8 @@ RSpec.describe Takagi::Client do
 
   describe 'liveness probe' do
     def with_protocol_server(protocol)
-      port = find_free_port
-      server = Takagi::Base.spawn!(port: port, protocols: [protocol])
+      server = Takagi::Base.spawn!(port: 0, protocols: [protocol])
+      port = bound_port_of(server)
       scheme = protocol == :tcp ? 'coap+tcp' : 'coap'
       client = described_class.new("#{scheme}://127.0.0.1:#{port}", timeout: 2)
       yield(client)
@@ -214,6 +214,19 @@ RSpec.describe Takagi::Client do
       port
     end
 
+    # A port that must NOT answer cannot be held open while the client probes it, so this is the
+    # one probe-and-release left in the suite (the same shape as `closed_tcp_port` above): the
+    # ephemeral port is bound, read and released, and the example's assertion is that nothing
+    # answers on it. Its failure mode is a loud failure, never a false green (row 25 of
+    # .omo/plans/tcp-multi-worker.md).
+    def closed_udp_port
+      socket = UDPSocket.new
+      socket.bind('127.0.0.1', 0)
+      port = socket.addr[1]
+      socket.close
+      port
+    end
+
     it 'reports a spawned UDP server as alive' do
       with_protocol_server(:udp) { |client| expect(client.ping).to be true }
     end
@@ -223,7 +236,7 @@ RSpec.describe Takagi::Client do
     end
 
     it 'reports a closed UDP port as not alive within the timeout instead of raising' do
-      client = described_class.new("coap://127.0.0.1:#{find_free_port}", timeout: 1)
+      client = described_class.new("coap://127.0.0.1:#{closed_udp_port}", timeout: 1)
 
       started = Time.now
       alive = client.ping

@@ -40,19 +40,21 @@ RSpec.describe 'Takagi Multi Protocol Server' do
   end
 
   it 'handles requests over both UDP and TCP' do
-    port = find_free_port
-    server = Takagi::Base.spawn!(port: port, protocols: [:udp, :tcp])
+    server = Takagi::Base.spawn!(port: 0, protocols: [:udp, :tcp])
+    built = server.instance_variable_get(:@servers)
+    udp_port = bound_port_of(built.find { |s| s.is_a?(Takagi::Server::Udp) })
+    tcp_port = bound_port_of(built.find { |s| s.is_a?(Takagi::Server::Tcp) })
 
     # Test UDP
     udp_socket = UDPSocket.new
     request = Takagi::Message::Request.new(method: :get, uri: URI('coap://localhost/ping'))
-    udp_socket.send(request.to_bytes, 0, '127.0.0.1', port)
+    udp_socket.send(request.to_bytes, 0, '127.0.0.1', udp_port)
     response, = udp_socket.recvfrom(1024)
     inbound_udp = Takagi::Message::Inbound.new(response)
     expect(inbound_udp.payload).to include('Pong')
 
     # Test TCP
-    tcp_client = TCPSocket.new('127.0.0.1', port)
+    tcp_client = TCPSocket.new('127.0.0.1', tcp_port)
     request_tcp = Takagi::Message::Outbound.new(
       code: 1,  # GET
       payload: nil,

@@ -7,11 +7,10 @@ require_relative "../../lib/takagi"
 
 RSpec.describe "Takagi RFC 7252 Compliance" do
   before(:all) do
-    port = find_free_port
-    @server = Takagi::Base.spawn!(port: port)
-    @port = port
+    @server = Takagi::Base.spawn!(port: 0)
+    @port = bound_port_of(@server)
     @client = UDPSocket.new
-    @server_address = ["127.0.0.1", port]
+    @server_address = ['127.0.0.1', @port]
   end
 
   after(:all) do

@@ -42,9 +42,8 @@ RSpec.describe 'Takagi TCP Server' do
   end
 
   it 'handles GET requests over TCP' do
-    port = find_free_port
-    server = Takagi::Base.spawn!(port: port, protocols: [:tcp])
-    client = TCPSocket.new('127.0.0.1', port)
+    server = Takagi::Base.spawn!(port: 0, protocols: [:tcp])
+    client = TCPSocket.new('127.0.0.1', bound_port_of(server))
 
     # Create TCP-formatted message using Outbound
     request = Takagi::Message::Outbound.new(

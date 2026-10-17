@@ -4,9 +4,8 @@ require 'digest'
 
 RSpec.describe Takagi::Observer::Sender do
   it 'sends CoAP packet to subscriber' do
-    port = find_free_port
-    fake_server = UDPSocket.new
-    fake_server.bind('127.0.0.1', port)
+    fake_server = free_port_socket
+    port = fake_server.addr[1]
 
     socket = UDPSocket.new
     Takagi::Network::UdpSender.instance.setup(socket: socket)

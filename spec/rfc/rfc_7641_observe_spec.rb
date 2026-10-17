@@ -6,14 +6,13 @@ require 'timeout'
 require 'uri'
 
 RSpec.describe Takagi::Observer::Client do
-  let(:server_port) { find_free_port }
-  let(:server_socket) { UDPSocket.new }
+  # `port: 0` on the socket itself: the port is earned by the bind that will hold it, so there is
+  # no window between a probe and the bind for anything else to take it (row 25 of
+  # .omo/plans/tcp-multi-worker.md).
+  let(:server_socket) { UDPSocket.new.tap { |socket| socket.bind('0.0.0.0', 0) } }
+  let(:server_port) { server_socket.addr[1] }
   let(:notify_payload) { '{"temp":22.5}' }
   let(:uri) { "coap://localhost:#{server_port}/sensors/temp" }
-
-  before do
-    server_socket.bind('0.0.0.0', server_port)
-  end
 
   after do
     server_socket.close
@@ -95,7 +94,11 @@ end
 
 RSpec.describe 'Takagi Observe End-to-End' do
   let(:queue) { Queue.new }
-  port = find_free_port
+  # The forked child EARNS its port (`port: 0`) and hands the real number to the parent over a
+  # pipe, so the parent never has to guess a "free" port another process could take between the
+  # probe and the child's bind (row 25 of .omo/plans/tcp-multi-worker.md). `PORT` still overrides
+  # it for a manual run.
+  port = nil
 
   def wait_until_serving(server_port, deadline_seconds: 10)
     probe = UDPSocket.new
@@ -128,7 +131,9 @@ RSpec.describe 'Takagi Observe End-to-End' do
   end
 
   before(:all) do
+    reader, writer = IO.pipe
     @server_pid = fork do
+        reader.close
         class TestApp < Takagi::Base
           reactor do
             observable "/sensors/temp" do
@@ -137,8 +142,19 @@ RSpec.describe 'Takagi Observe End-to-End' do
           end
         end
 
-        TestApp.run!(port: ENV['PORT'] || port)
+        # `boot!` plus `build_servers` plus `run!` is exactly what `Base.run!` does for one
+        # protocol; the only parts left out are the startup banner and plugin enabling, neither
+        # of which this example observes. Binding port 0 here is what makes the reported port a
+        # fact instead of a guess.
+        TestApp.boot!
+        server = TestApp.send(:build_servers, [:udp], ENV['PORT'] ? ENV['PORT'].to_i : 0).first
+        writer.puts(server.instance_variable_get(:@socket).addr[1])
+        writer.close
+        server.run!
       end
+      writer.close
+      port = reader.gets.to_i
+      reader.close
       wait_until_serving(port)
   end
 
@@ -191,9 +207,9 @@ RSpec.describe 'Takagi Observe + Block2' do
     Takagi.config.middleware.stack = [{ name: 'BlockWise', options: {} }]
     Takagi::MiddlewareStack.instance.reset!
 
-    @port = find_free_port
-    @server = Takagi::Server::Udp.new(port: @port, worker_processes: 1, worker_threads: 1,
+    @server = Takagi::Server::Udp.new(port: 0, worker_processes: 1, worker_threads: 1,
                                       watcher: Takagi::Observer::Watcher.new(interval: 60))
+    @port = bound_port_of(@server)
     @server_thread = Thread.new { @server.run! }
     @subscriber = UDPSocket.new
     @subscriber.bind('127.0.0.1', 0)

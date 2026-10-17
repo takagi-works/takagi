@@ -50,10 +50,9 @@ RSpec.describe 'Takagi RFC 6690 Resource Discovery' do
       ct 'application/cbor'
     end
 
-    port = find_free_port
-    @server = Takagi::Base.spawn!(port: port)
+    @server = Takagi::Base.spawn!(port: 0)
     @client = UDPSocket.new
-    @server_address = ['127.0.0.1', port]
+    @server_address = ['127.0.0.1', bound_port_of(@server)]
   end
 
   after(:all) do

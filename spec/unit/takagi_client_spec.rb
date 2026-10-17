@@ -211,8 +211,8 @@ RSpec.describe Takagi::UdpClient do
 
   describe 'block-wise transfer over UDP' do
     def with_udp_server
-      port = find_free_port
-      server = Takagi::Base.spawn!(port: port, protocols: [:udp])
+      server = Takagi::Base.spawn!(port: 0, protocols: [:udp])
+      port = bound_port_of(server)
       client = described_class.new("coap://127.0.0.1:#{port}", timeout: 10)
       yield(client)
     ensure
