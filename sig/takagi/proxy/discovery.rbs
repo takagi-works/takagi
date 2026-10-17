@@ -1,0 +1,9 @@
+module Takagi
+  class Proxy::Discovery
+    attr_reader route_table: untyped
+
+    def initialize: (route_table: untyped) -> void
+    def aggregate: -> String
+    def local_routes: -> Array[untyped]
+  end
+end

@@ -4,8 +4,6 @@ module Takagi
     class Tcp
       @port: untyped
 
-      @worker_threads: untyped
-
       @middleware_stack: untyped
 
       @router: untyped
@@ -18,11 +16,35 @@ module Takagi
 
       @sender: untyped
 
-      @workers: untyped
+      @worker_processes: untyped
+
+      @worker_threads: ::Integer?
+
+      @pool: untyped
+
+      @pool_threads: untyped
 
       @shutdown_called: untyped
 
-      def initialize: (?port: ::Integer, ?worker_threads: ::Integer, ?middleware_stack: untyped?, ?router: untyped?, ?logger: untyped?, ?watcher: untyped?, ?sender: untyped?) -> void
+      @cluster: untyped
+
+      @owned_cluster: untyped
+
+      @adapter: untyped
+
+      attr_reader worker_pids: untyped
+
+      attr_reader cluster: untyped
+
+      attr_reader adapter: untyped
+
+      def bound_port: () -> ::Integer
+
+      def supervised_by: (untyped cluster) -> untyped
+
+      def start_service_hooks!: () -> untyped
+
+      def initialize: (?port: ::Integer, ?worker_processes: ::Integer, ?worker_threads: ::Integer?, ?middleware_stack: untyped?, ?router: untyped?, ?logger: untyped?, ?watcher: untyped?, ?sender: untyped?, ?max_connections: ::Integer?) -> void
 
       def run!: () -> untyped
 

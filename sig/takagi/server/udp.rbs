@@ -22,7 +22,25 @@ module Takagi
 
       @shutdown_called: untyped
 
-      @worker_pids: untyped
+      @cluster: untyped
+
+      @owned_cluster: untyped
+
+      @adapter: untyped
+
+      DRAIN_DEADLINE: ::Float
+
+      attr_reader cluster: untyped
+
+      attr_reader adapter: untyped
+
+      def bound_port: () -> ::Integer
+
+      def supervised_by: (untyped cluster) -> untyped
+
+      def start_service_hooks!: () -> untyped
+
+      def worker_pids: () -> untyped
 
       def initialize: (?port: ::Integer, ?worker_processes: ::Integer, ?worker_threads: ::Integer, ?middleware_stack: untyped?, ?router: untyped?, ?logger: untyped?, ?watcher: untyped?) -> void
 
@@ -36,17 +54,19 @@ module Takagi
 
       def log_boot_details: () -> untyped
 
-      def spawn_workers: () -> untyped
+      def stop_requested?: () -> untyped
 
-      def fork_worker: () -> untyped
+      def request_stop!: () -> untyped
 
-      def worker_configuration: () -> { port: untyped, socket: untyped, middleware_stack: untyped, sender: untyped, logger: untyped, threads: untyped }
+      def prepare_serving_process: () -> void
+
+      def serve_datagrams: () -> untyped
+
+      def build_worker: () -> untyped
+
+      def worker_configuration: () -> { port: untyped, socket: untyped, middleware_stack: untyped, router: untyped, sender: untyped, logger: untyped, threads: untyped }
 
       def close_socket: () -> untyped
-
-      def terminate_workers: () -> (nil | untyped)
-
-      def test_environment?: () -> untyped
     end
   end
 end

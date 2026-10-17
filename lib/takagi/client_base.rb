@@ -374,6 +374,31 @@ module Takagi
     # sequence and a Block2 response is reassembled by {ClientBlockWiseIteration} on
     # transports that need it, so callers keep using one request and one response.
     #
+    # Sends one request and returns the RAW response bytes, or nil when the peer did not answer.
+    #
+    # A caller that must tell "no answer" from "an answer it cannot parse" needs the bytes rather
+    # than the parsed response - a CoAP proxy decides between 5.04 (RFC 7252 5.9.3.5) and 5.02
+    # (5.9.3.3) on exactly that difference, and {#request} collapses both to nil. One exchange only:
+    # the block-wise iteration stays with the caller.
+    #
+    # @param method [Symbol] :get, :post, :put, :delete
+    # @param path [String] resource path, resolved against the client's server URI
+    # @param payload [String, Hash, nil]
+    # @param options [Hash] CoAP options { option_number => value }
+    # @param type [Integer, nil] CoAP message type
+    # @param token [String, nil] the token to use; a fresh random one when nil (a proxy forwarding
+    #   block-wise passes the SAME token for every block of one exchange)
+    # @return [String, nil] raw response bytes, or nil when the peer did not answer
+    def raw_exchange(method, path, payload = nil, options: {}, type: nil, token: nil)
+      uri = URI.join(server_uri.to_s, path)
+      message = build_request_message(
+        method, uri, payload, token: token || SecureRandom.hex(4), options: options, type: type
+      )
+      exchange(message, uri)
+    end
+
+    # Sends one logical request and returns the response the caller sees.
+    #
     # @param method [Symbol] HTTP method (:get, :post, :put, :delete)
     # @param path [String] Resource path
     # @param payload [String, Hash, nil] Data for POST/PUT requests

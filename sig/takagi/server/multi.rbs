@@ -1,12 +1,28 @@
 module Takagi
   module Server
-    # Helper class to run multiple servers concurrently
+    # Runs a service's transports concurrently through ONE cluster
     class Multi
       @servers: untyped
 
-      @threads: untyped
+      @protocols: untyped
 
-      def initialize: (untyped servers) -> void
+      @logger: untyped
+
+      @adapters: untyped
+
+      @ports: untyped
+
+      @cluster: untyped
+
+      @server_thread: untyped
+
+      attr_reader servers: untyped
+
+      attr_reader cluster: untyped
+
+      def initialize: (untyped servers, ?protocols: untyped?, ?logger: untyped?) -> void
+
+      def worker_pids: () -> untyped
 
       def run!: () -> untyped
 

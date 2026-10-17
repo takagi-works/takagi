@@ -1,0 +1,12 @@
+module Takagi
+  class Proxy::RouteTable
+    attr_reader routes: Array[untyped]
+    attr_reader names: Array[String]
+    attr_reader forward: Symbol
+
+    def initialize: (routes: Array[untyped], names: Array[String], ?forward: Symbol) -> void
+    def resolve: (String path) -> [untyped, String]?
+    def own_authority?: (String host, Integer port) -> bool
+    def register_own_ports: (Array[Integer]) -> void
+  end
+end

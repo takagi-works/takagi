@@ -21,10 +21,18 @@ module Takagi
       :szx, :max_assembled_bytes, :assembly_ttl, :max_concurrent_assemblies, :enabled,
       keyword_init: true
     )
+    # One `proxy.routes` entry as configuration carries it: plain data. Whether the prefix is
+    # absolute and unique, and whether the authority is well formed, is
+    # `Takagi::Proxy::RouteTable`'s boot validation (row 1 of .omo/plans/coap-proxy.md).
+    ProxyRouteConfig = Struct.new(:prefix, :outbound, :host, :port, keyword_init: true)
+    ProxyConfig = Struct.new(:enabled, :routes, :names, :discovery, :forward, keyword_init: true)
+    PROXY_DISCOVERY_MODES = %i[aggregate local].freeze
+    PROXY_FORWARD_MODES = %i[deny configured].freeze
+    PROXY_TRANSPORTS = %i[udp tcp].freeze
 
     attr_accessor :port, :bind_address, :logger, :observability, :auto_migrate, :custom,
                   :protocols, :server_name, :event_bus, :router, :middleware, :allocation, :plugins,
-                  :block_wise, :max_connections
+                  :block_wise, :proxy, :max_connections
     attr_reader :protocol_settings
 
     def initialize
@@ -36,6 +44,7 @@ module Takagi
       set_allocation_defaults
       set_plugin_defaults
       set_block_wise_defaults
+      set_proxy_defaults
       @custom = {}
       @server_name = nil
     end
@@ -77,6 +86,7 @@ module Takagi
       apply_allocation(data)
       apply_plugins(data)
       apply_block_wise(data)
+      apply_proxy(data)
       apply_custom_settings(data)
     end
 
@@ -183,6 +193,53 @@ module Takagi
       return if value.nil?
 
       @block_wise.public_send("#{key}=", value)
+    end
+
+    # The proxy section of row 1 of .omo/plans/coap-proxy.md: the reverse proxy's
+    # prefix-to-backend routes, the names the proxy answers to, how discovery is answered, and
+    # whether a forward-proxy request is served at all. Parsing is shape-only, exactly as
+    # `protocol_settings` is: whether a route is possible is the route table's boot validation.
+    def apply_proxy(data)
+      proxy_data = data['proxy']
+      return unless proxy_data.is_a?(Hash)
+
+      @proxy = ProxyConfig.new(
+        enabled: proxy_data['enabled'] ? true : false,
+        routes: parse_proxy_routes(proxy_data['routes']),
+        names: Array(proxy_data['names']).map(&:to_s),
+        discovery: parse_proxy_mode('discovery', proxy_data['discovery'], PROXY_DISCOVERY_MODES, :local),
+        forward: parse_proxy_mode('forward', proxy_data['forward'], PROXY_FORWARD_MODES, :deny)
+      )
+    end
+
+    def parse_proxy_routes(entries)
+      Array(entries).map { |entry| parse_proxy_route(entry) }
+    end
+
+    def parse_proxy_route(entry)
+      raise ArgumentError, "Invalid proxy route: #{entry.inspect}" unless entry.is_a?(Hash)
+
+      ProxyRouteConfig.new(
+        prefix: proxy_route_field(entry, 'prefix'),
+        outbound: parse_proxy_mode('route outbound', proxy_route_field(entry, 'outbound'), PROXY_TRANSPORTS, nil),
+        host: proxy_route_field(entry, 'host'),
+        port: proxy_route_field(entry, 'port')
+      )
+    end
+
+    # Reads a route key written either with the YAML's string key or a symbol.
+    def proxy_route_field(entry, key)
+      value = entry[key]
+      value.nil? ? entry[key.to_sym] : value
+    end
+
+    def parse_proxy_mode(key, raw, allowed, default)
+      return default if raw.nil?
+
+      mode = raw.to_s.downcase.to_sym
+      return mode if allowed.include?(mode)
+
+      raise ArgumentError, "Invalid proxy #{key}: #{raw.inspect}. Use one of: #{allowed.map(&:inspect).join(', ')}"
     end
 
     def apply_plugins(data)
@@ -310,6 +367,16 @@ module Takagi
         assembly_ttl: 30,
         max_concurrent_assemblies: 64,
         enabled: true
+      )
+    end
+
+    def set_proxy_defaults
+      @proxy = ProxyConfig.new(
+        enabled: false,
+        routes: [],
+        names: [],
+        discovery: :local,
+        forward: :deny
       )
     end
 

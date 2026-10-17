@@ -95,6 +95,10 @@ module Takagi
     # @return [Boolean] true if the client is closed
     def closed?: () -> untyped
 
+    # Probes the peer's liveness
+    # @return [Boolean] true when the peer answered the probe
+    def ping: () -> bool
+
     # Creates a new client and yields it to the block, ensuring it's closed afterward.
     # This is the recommended way to use clients to prevent resource leaks.
     #
@@ -116,6 +120,10 @@ module Takagi
     # @param payload [String] (optional) Data for POST/PUT requests
     # @param callback [Proc] (optional) Callback function for processing the response
     def request: (untyped _method, untyped _path, ?untyped? _payload) { (?) -> untyped } -> untyped
+
+    # Sends this transport's liveness probe
+    # @return [Boolean] true when the peer answered the probe
+    def transport_ping: () -> bool
 
     # Subclasses can override this to perform specific cleanup
     # Called by #close before marking the client as closed

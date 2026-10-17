@@ -2,6 +2,13 @@ module Takagi
   module Server
     # Handles incoming UDP messages on behalf of the master Udp server.
     class UdpWorker
+      # How long in-flight datagram work may take to finish once the receive loop has stopped
+      # accepting; the inner half of the drain contract
+      DRAIN_DEADLINE: ::Float
+
+      # The sentinel the drain pushes once per reader thread to end it
+      DRAIN_SENTINEL: ::Symbol
+
       @socket: untyped
 
       @middleware_stack: untyped
@@ -20,6 +27,10 @@ module Takagi
 
       def run: () -> untyped
 
+      # The bounded drain: one sentinel per reader, then the readers are joined inside
+      # DRAIN_DEADLINE and a straggler is signalled at it. Idempotent.
+      def drain: () -> untyped
+
       private
 
       def process_loop: (untyped queue) -> untyped
@@ -30,7 +41,7 @@ module Takagi
 
       def log_inbound_request: (untyped inbound_request) -> untyped
 
-      def immediate_response: (untyped inbound_request) -> (untyped | nil)
+      def immediate_response: (untyped inbound_request, ?untyped datagram) -> (untyped | nil)
 
       def log_middleware_result: (untyped result) -> (nil | untyped)
 

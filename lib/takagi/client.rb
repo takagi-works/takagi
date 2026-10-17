@@ -33,7 +33,7 @@ module Takagi
 
     # Delegate public methods to the implementation
     def_delegators :@impl, :server_uri, :timeout, :callbacks, :closed?
-    def_delegators :@impl, :get, :post, :put, :delete, :on, :observe
+    def_delegators :@impl, :get, :post, :put, :delete, :on, :observe, :raw_exchange
     def_delegators :@impl, :ping
     def_delegators :@impl, :get_json, :post_json, :put_json, :close
 

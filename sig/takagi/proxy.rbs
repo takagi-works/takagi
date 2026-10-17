@@ -1,0 +1,26 @@
+module Takagi
+  class Proxy
+    DEFAULT_PROTOCOLS: Array[Symbol]
+
+    attr_reader route_table: untyped
+    attr_reader router: untyped
+    attr_reader middleware_stack: untyped
+    attr_reader servers: Array[untyped]
+    attr_reader forwarder: untyped
+
+    def initialize: (
+      route_table: untyped,
+      ?middleware_stack: untyped,
+      ?port: Integer,
+      ?protocols: Array[Symbol],
+      ?router: untyped,
+      ?worker_processes: Integer,
+      ?worker_threads: Integer?
+    ) -> void
+
+    def port: (Symbol protocol) -> Integer
+    def ports: -> Hash[Symbol, Integer]
+    def run!: -> void
+    def shutdown!: -> void
+  end
+end

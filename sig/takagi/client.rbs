@@ -53,6 +53,10 @@ module Takagi
     #   end
     def initialize: (untyped server_uri, ?timeout: ::Integer, ?protocol: untyped?, ?use_retransmission: bool) ?{ (untyped) -> untyped } -> void
 
+    # Probes the peer's liveness through the chosen transport
+    # @return [Boolean] true when the peer answered the probe
+    def ping: () -> bool
+
     private
 
     # Detects the protocol from the URI scheme
@@ -85,6 +89,10 @@ module Takagi
     # @param timeout [Integer] Maximum time to wait for a response
     # @param use_retransmission [Boolean] Enable RFC 7252 §4.2 compliant retransmission (default: true)
     def initialize: (untyped server_uri, ?timeout: ::Integer, ?use_retransmission: bool) -> void
+
+    # Sends an Empty Confirmable message and reports whether a Reset answers it
+    # @return [Boolean] true when a Reset echoes the probe's Message ID
+    def transport_ping: () -> bool
 
     # Stops the retransmission manager thread
     def cleanup_resources: () -> untyped

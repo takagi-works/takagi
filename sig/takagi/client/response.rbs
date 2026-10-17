@@ -72,6 +72,14 @@ module Takagi
       # @return [Boolean]
       def error?: () -> untyped
 
+      # Check if the peer rejected the request with a Reset (RFC 7252 §4.2)
+      # @return [Boolean]
+      def rejected?: () -> untyped
+
+      # Check if the request was acknowledged without a response yet (RFC 7252 §5.2.2)
+      # @return [Boolean]
+      def acknowledged_without_response?: () -> untyped
+
       # Common 2.xx success codes (using registry)
       def created?: () -> untyped
 

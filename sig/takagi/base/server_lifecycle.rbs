@@ -16,7 +16,8 @@ module Takagi
       # @param config_path [String] Path to configuration file
       # @param protocols [Array<Symbol>, nil] Protocols to enable (uses config if nil)
       # @param router [Router, CompositeRouter, nil] Custom router (uses global if nil)
-      def run!: (?port: untyped?, ?config_path: ::String, ?protocols: untyped?, ?router: (Router | CompositeRouter)?) -> untyped
+      # @param banner [Boolean] Show startup banner (default: true)
+      def run!: (?port: untyped?, ?config_path: ::String, ?protocols: untyped?, ?router: (Router | CompositeRouter)?, ?banner: bool) -> untyped
 
       # Spawns servers in background threads
       #
@@ -26,6 +27,13 @@ module Takagi
       def spawn!: (?port: ::Integer, ?protocols: untyped?) -> untyped
 
       private
+
+      # Prints the startup banner with Takagi branding
+      #
+      # @param port [Integer] Port server will bind to
+      # @param protocols [Array<Symbol>] Protocols being enabled
+      # @param router [Router] Router instance to count routes from
+      def print_startup_banner: (port: untyped, protocols: untyped, router: untyped) -> void
 
       # Builds server instances for the given protocols
       #
@@ -40,15 +48,65 @@ module Takagi
       # @param protocol [Symbol] Protocol identifier (:udp, :tcp, etc.)
       # @param port [Integer] Port to bind to
       # @param threads [Integer] Number of worker threads
-      # @param processes [Integer] Number of worker processes (UDP only)
+      # @param processes [Integer] The service's ONE resolved worker process count, the
+      #   same value handed to every transport; a per-protocol `processes` is only a
+      #   compatibility alias that restates it
       # @param router [Router, CompositeRouter, nil] Custom router
       # @return [Server] Server instance
-      def instantiate_server: (untyped protocol, untyped port, threads: untyped, processes: untyped, ?router: (Router | CompositeRouter)?) -> untyped
+      def instantiate_server: (untyped protocol, untyped port, threads: untyped, processes: untyped, ?max_connections: untyped?, ?router: (Router | CompositeRouter)?) -> untyped
+
+      # True when the protocol's own settings carry a `threads` count: the presence is
+      # what opens the TCP handler pool
+      def per_protocol_threads?: (untyped protocol) -> bool
 
       # Runs servers (single or multi-protocol)
       #
       # @param servers [Array<Server>] Server instances to run
-      def run_servers: (untyped servers) -> untyped
+      # @param protocols [Array<Symbol>, nil] The transports `servers` were built for, in order
+      def run_servers: (untyped servers, ?untyped? protocols) -> untyped
+
+      public
+
+      # The transports whose serving pool takes the global `threads` value as its own size
+      GLOBAL_THREADS_CONSUMERS: ::Array[::Symbol]
+
+      # Validates and reports the concurrency keys of one protocol's settings
+      def apply_concurrency_vocabulary!: (untyped protocol, untyped settings) -> untyped
+
+      # ONE worker count per service, resolved once per build
+      def resolve_service_processes!: () -> untyped
+
+      # Every WRITTEN `processes` value, paired with the layer that carries it
+      def configured_process_counts: () -> untyped
+
+      # The refusal raised when the configured worker counts disagree
+      def disagreeing_worker_counts!: (untyped counts) -> untyped
+
+      # Names the layer a configured `processes` count came from
+      def process_count_source: (untyped source) -> untyped
+
+      # Raises for a per-protocol key its target cannot apply
+      def reject_inapplicable_protocol_keys!: () -> untyped
+
+      # Reports the global keys a protocol cannot consume
+      def warn_about_unconsumed_globals: (untyped protocol, untyped settings) -> untyped
+
+      def warn_about_unconsumed_max_connections: (untyped protocol) -> untyped
+
+      def warn_about_unconsumed_threads: (untyped protocol, untyped settings) -> untyped
+
+      # Whether the server a protocol builds consumes a `max_connections` key
+      def accepts_max_connections?: (untyped protocol) -> bool
+
+      # The service's ONE boot surface: the transport set, the worker count every transport
+      # was built with, and each transport's honest bound port
+      def announce_service_boot: (protocols: untyped, servers: untyped) -> untyped
+
+      # The one boot-log line describing the service
+      def service_boot_line: (untyped payload) -> ::String
+
+      # The port a transport's own socket holds
+      def bound_port_of: (untyped server) -> untyped
     end
   end
 end

@@ -1,0 +1,8 @@
+module Takagi
+  class Proxy::Forwarder
+    attr_reader route_table: untyped
+
+    def initialize: (route_table: untyped) -> void
+    def forward: (untyped request, Symbol inbound_protocol) -> untyped
+  end
+end

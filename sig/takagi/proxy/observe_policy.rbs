@@ -1,0 +1,6 @@
+module Takagi
+  class Proxy::ObservePolicy
+    def strip_observe: (untyped response) -> untyped
+    def cancel_observation: (untyped backend_request, untyped backend_response) -> void
+  end
+end

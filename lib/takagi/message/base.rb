@@ -8,7 +8,7 @@ module Takagi
 
     # Base class for message
     class Base
-      attr_reader :version, :type, :token, :message_id, :payload, :options, :code
+      attr_reader :version, :type, :token, :message_id, :payload, :options, :code, :transport
 
       def initialize(data = nil, transport: :udp)
         @transport = transport

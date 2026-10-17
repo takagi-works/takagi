@@ -1,0 +1,6 @@
+module Takagi
+  class Proxy::OptionRules
+    def self.unsafe_unknown?: (untyped request) -> bool
+    def self.critical_unknown?: (untyped request) -> bool
+  end
+end

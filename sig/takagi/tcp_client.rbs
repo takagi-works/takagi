@@ -19,5 +19,9 @@ module Takagi
   #   end
   class TcpClient < ClientBase
     def request: (untyped method, untyped path, ?untyped? payload) { (?) -> untyped } -> untyped
+
+    # Sends a Ping signalling message and reports whether a Pong with the same token answers it
+    # @return [Boolean] true when a Pong carries the probe's token
+    def transport_ping: () -> bool
   end
 end

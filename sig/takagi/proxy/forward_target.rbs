@@ -1,0 +1,10 @@
+module Takagi
+  class Proxy::ForwardTarget
+    attr_reader host: String
+    attr_reader port: Integer
+    attr_reader protocol: Symbol
+    attr_reader prefix: String
+
+    def initialize: (host: String, port: Integer, protocol: Symbol, prefix: String) -> void
+  end
+end

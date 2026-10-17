@@ -27,6 +27,8 @@ module Takagi
 
     @middleware: untyped
 
+    @proxy: untyped
+
     Observability: untyped
 
     EventBusConfig: untyped
@@ -34,6 +36,8 @@ module Takagi
     RouterConfig: untyped
 
     MiddlewareConfig: untyped
+
+    ProxyConfig: untyped
 
     attr_accessor port: untyped
 
@@ -47,7 +51,11 @@ module Takagi
 
     attr_accessor custom: untyped
 
-    attr_accessor processes: untyped
+    # `processes` is a recording writer like `threads=` (row 29 of .omo/plans/tcp-multi-worker.md),
+    # so the accessor pair is declared as a reader plus an explicit setter.
+    attr_reader processes: untyped
+
+    def processes=: (untyped value) -> untyped
 
     attr_accessor threads: untyped
 
@@ -61,6 +69,8 @@ module Takagi
 
     attr_accessor middleware: untyped
 
+    attr_accessor proxy: untyped
+
     def initialize: () -> void
 
     def []: (untyped key) -> untyped
@@ -72,6 +82,14 @@ module Takagi
     def respond_to_missing?: (untyped name, ?bool include_private) -> untyped
 
     def load_file: (untyped path) -> untyped
+
+    # Forgets the written-key presence the readers above recorded, so a restored value cannot
+    # leave a key marked as written (row 23 of .omo/plans/tcp-multi-worker.md)
+    def reset_written_keys!: () -> void
+
+    # True when the setting was written by the loaded YAML file or by a programmatic assignment,
+    # never for a default (runtime arity 1)
+    def written?: (untyped key) -> bool
 
     private
 

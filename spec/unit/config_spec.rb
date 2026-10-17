@@ -253,4 +253,64 @@ RSpec.describe Takagi::Config do
       end.to raise_error(ArgumentError, /szx/)
     end
   end
+
+  # Row 1 of .omo/plans/coap-proxy.md. Parsing is shape-only here, exactly as `protocol_settings`
+  # is: whether a prefix is absolute and unique, and whether a route points back at the proxy
+  # itself, is `Takagi::Proxy::RouteTable`'s boot validation (spec/unit/proxy/route_table_spec.rb).
+  describe 'proxy settings' do
+    it 'defaults to a disabled section that refuses to forward and answers discovery locally (PROOF, row 1)' do
+      expect(config.proxy.enabled).to be(false)
+      expect(config.proxy.routes).to eq([])
+      expect(config.proxy.names).to eq([])
+      expect(config.proxy.discovery).to eq(:local)
+      expect(config.proxy.forward).to eq(:deny)
+    end
+
+    it 'parses a proxy block into routes, names, discovery and forward (PROOF, row 1)' do
+      write_config <<~YAML
+        proxy:
+          enabled: true
+          discovery: aggregate
+          forward: configured
+          names:
+            - localhost
+            - "127.0.0.1:5683"
+          routes:
+            - prefix: /sensors
+              host: 10.0.0.1
+              port: 5683
+            - prefix: /admin
+              host: 10.0.0.2
+              port: 9999
+              outbound: tcp
+      YAML
+
+      proxy = config.proxy
+      expect(proxy.enabled).to be(true)
+      expect(proxy.discovery).to eq(:aggregate)
+      expect(proxy.forward).to eq(:configured)
+      expect(proxy.names).to eq(['localhost', '127.0.0.1:5683'])
+      expect(proxy.routes.map(&:prefix)).to eq(['/sensors', '/admin'])
+      expect(proxy.routes.map(&:host)).to eq(['10.0.0.1', '10.0.0.2'])
+      expect(proxy.routes.first.port).to eq(5683)
+      expect(proxy.routes.first.outbound).to be_nil
+      expect(proxy.routes.last.outbound).to eq(:tcp)
+    end
+
+    it 'keeps the defaults for a YAML that writes no proxy block at all (PROOF, row 1)' do
+      write_config "port: 5684\n"
+
+      expect(config.proxy.enabled).to be(false)
+      expect(config.proxy.routes).to eq([])
+      expect(config.proxy.forward).to eq(:deny)
+    end
+
+    it 'rejects an unknown discovery mode (PROOF, row 1)' do
+      expect { write_config "proxy:\n  discovery: cache\n" }.to raise_error(ArgumentError, /discovery/)
+    end
+
+    it 'rejects an unknown forward mode (PROOF, row 1)' do
+      expect { write_config "proxy:\n  forward: open\n" }.to raise_error(ArgumentError, /forward/)
+    end
+  end
 end
