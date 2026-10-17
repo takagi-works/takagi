@@ -22,7 +22,7 @@ module Takagi
       keyword_init: true
     )
 
-    attr_accessor :port, :bind_address, :logger, :observability, :auto_migrate, :custom, :processes, :threads,
+    attr_accessor :port, :bind_address, :logger, :observability, :auto_migrate, :custom,
                   :protocols, :server_name, :event_bus, :router, :middleware, :allocation, :plugins,
                   :block_wise, :max_connections
     attr_reader :protocol_settings
@@ -86,7 +86,7 @@ module Takagi
       assign_setting(data, 'port') { |value| @port = value }
       assign_setting(data, 'bind_address') { |value| @bind_address = value }
       assign_processes(data)
-      assign_setting(data, 'threads') { |value| @threads = value }
+      assign_setting(data, 'threads') { |value| self.threads = value }
       assign_protocols(data['protocols'])
       assign_setting(data, 'server_name') { |value| @server_name = value }
       assign_setting(data, 'max_connections') { |value| @max_connections = value }
@@ -339,6 +339,7 @@ module Takagi
       processes_value = data['processes'] || data['process']
       return unless processes_value
 
+      (@written_keys ||= []) << :processes
       @processes = processes_value
     end
 
@@ -398,6 +399,48 @@ module Takagi
         { name: 'Metrics', options: {} },
         { name: 'BlockWise', options: {} }
       ]
+    end
+
+    public
+
+    # Written-key presence: reporting an unconsumed key must key off whether the user WROTE it,
+    # not off the value it holds, because a written count can equal the default (row 20 of
+    # .omo/plans/tcp-multi-worker.md). Both the YAML path and a programmatic assignment funnel
+    # through this accessor pair, while `set_server_defaults` assigns the ivar directly and
+    # therefore never counts as a write.
+    attr_reader :threads
+
+    def threads=(value)
+      (@written_keys ||= []) << :threads
+      @threads = value
+    end
+
+    # The other global key a boot warning reads for presence. A bare `attr_accessor` recorded
+    # nothing, so `Takagi.config.processes = 1` with a TCP target was a silent acceptance of a
+    # key that target cannot consume while the YAML path recorded it - the programmatic surface
+    # was asymmetric with `threads=` (row 29 of .omo/plans/tcp-multi-worker.md). The YAML path
+    # records its own presence in `assign_processes`, which bypasses this writer, and
+    # `set_server_defaults` assigns the ivar directly, so neither counts as a write here.
+    attr_reader :processes
+
+    def processes=(value)
+      (@written_keys ||= []) << :processes
+      @processes = value
+    end
+
+    # True when the setting was written by the loaded YAML file or by a programmatic assignment,
+    # never for a default.
+    def written?(key)
+      Array(@written_keys).include?(key.to_sym)
+    end
+
+    # Forgets every key this configuration was told to carry. Presence is what the boot warnings
+    # read, so a spec or a reload that restores a VALUE must be able to restore its PRESENCE too
+    # (row 23 of .omo/plans/tcp-multi-worker.md): restoring only the value leaves the key marked
+    # as written for the rest of the process, and an unrelated later build warns about a key
+    # nobody wrote in it.
+    def reset_written_keys!
+      @written_keys = []
     end
   end # rubocop:enable Metrics/ClassLength
 end

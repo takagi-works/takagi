@@ -124,6 +124,19 @@ RSpec.describe 'Takagi TCP multi-worker server' do
     true
   end
 
+  # Bounded wait on a real observable; unlike await_condition its failure is a nil RETURN rather
+  # than a boolean, for waits whose observable is a value (a port, a pid list, a survivor list).
+  def await_value(seconds)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds
+    loop do
+      value = yield
+      return value if value
+      return nil if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+      sleep 0.01
+    end
+  end
+
   # Bounded wait on a real observable; unlike a sleep, it returns the instant the
   # condition holds and its failure is the assertion's, not a timeout's.
   def await_condition(seconds)
@@ -202,18 +215,22 @@ RSpec.describe 'Takagi TCP multi-worker server' do
     nil
   end
 
+  # /proc/<pid>/stat is "<pid> (<comm>) <state> <ppid> ...": after the closing parenthesis the
+  # state comes first, so the parent link is the SECOND field.
+  def ppid_of(pid)
+    File.read("/proc/#{pid}/stat").rpartition(') ').last.split(' ', 3)[1].to_i
+  rescue Errno::ENOENT, Errno::ESRCH
+    nil
+  end
+
   # The master's LIVE TCP worker children: the kernel's own parent link plus the
   # child's own title. A dead (zombie) child has an empty cmdline, so a corpse never
   # counts as a child here - which is what makes "every child is gone" observable.
   def worker_children_of(parent_pid)
     Dir.glob('/proc/[0-9]*/stat').filter_map do |path|
-      stat = File.read(path)
-      pid = stat.split(' ', 2).first.to_i
-      # /proc/<pid>/stat is "<pid> (<comm>) <state> <ppid> ...": after the closing
-      # parenthesis the state comes first, so the parent link is the SECOND field.
-      ppid = stat.rpartition(') ').last.split(' ', 3)[1].to_i
-      next unless ppid == parent_pid
-      next unless worker_title(pid).to_s.start_with?('takagi-worker-tcp-')
+      pid = File.basename(File.dirname(path)).to_i
+      next unless ppid_of(pid) == parent_pid
+      next unless worker_title(pid).to_s.start_with?('takagi-worker-')
 
       pid
     rescue Errno::ENOENT, Errno::ESRCH
@@ -447,13 +464,14 @@ RSpec.describe 'Takagi TCP multi-worker server' do
   end
 
   # The public surface the consumed-status hazard needs: run! on a thread while
-  # shutdown! stays reachable from the caller, with the pass caught mid-iteration.
-  class InterlockedTcp < Takagi::Server::Tcp
-    attr_accessor :interlock
-
-    def spawn_workers
-      super
-      @worker_pids = WorkerReapInterlock.new(@worker_pids, @interlock) if @interlock
+  # shutdown! stays reachable from the caller, with the pass caught mid-iteration. The pid
+  # list and the pass itself live in the cluster now, so the interlock wraps the cluster's
+  # own pid list through a singleton `spawn_workers`.
+  def interlock_cluster_spawn!(cluster, interlock)
+    original = Takagi::Server::Cluster.instance_method(:spawn_workers).bind(cluster)
+    cluster.define_singleton_method(:spawn_workers) do
+      original.call
+      @worker_pids = WorkerReapInterlock.new(@worker_pids, interlock)
     end
   end
 
@@ -466,8 +484,8 @@ RSpec.describe 'Takagi TCP multi-worker server' do
     default_server = Takagi::Server::Tcp.new(port: 0)
     explicit_one = Takagi::Server::Tcp.new(port: 0, worker_processes: 1)
 
-    expect(default_server.send(:forking?)).to be(false)
-    expect(explicit_one.send(:forking?)).to be(false)
+    expect(default_server.cluster.forking?).to be(false)
+    expect(explicit_one.cluster.forking?).to be(false)
   ensure
     default_server&.shutdown!
     explicit_one&.shutdown!
@@ -517,14 +535,14 @@ RSpec.describe 'Takagi TCP multi-worker server' do
     server = Takagi::Server::Tcp.new(port: 0, worker_processes: 3)
     pids = []
     begin
-      server.send(:spawn_workers)
+      server.cluster.send(:spawn_workers)
       pids = server.worker_pids.dup
 
       expect(pids.size).to eq(3)
       pids.each_with_index do |pid, index|
         expect(Process.kill(0, pid)).to eq(1)
-        expect(await_worker_title(pid, "takagi-worker-tcp-#{index}"))
-          .to eq("takagi-worker-tcp-#{index}")
+        expect(await_worker_title(pid, "takagi-worker-#{index}"))
+          .to eq("takagi-worker-#{index}")
       end
 
       response = ping_over_tcp(bound_port(server))
@@ -576,8 +594,9 @@ RSpec.describe 'Takagi TCP multi-worker server' do
     Process.kill('KILL', master_pid)
     expect(await_child_exit(master_pid)).to be(true)
 
-    # Nothing is left to reap these: they must notice the missing master through
-    # the Process.ppid guard. 'Z' counts as exited - the system reaper owns the
+    # Nothing is left to reap these: they must notice the missing master through the parent-death
+    # guard the cluster armed them with - the master pid captured BEFORE the fork, never a parent
+    # pid the child reads for itself after it. 'Z' counts as exited - the system reaper owns the
     # corpse once the parent is gone; what matters is that serving stopped.
     states = await_pid_states(pids, [nil, 'Z'])
     expect(states.values - [nil, 'Z']).to be_empty
@@ -585,15 +604,144 @@ RSpec.describe 'Takagi TCP multi-worker server' do
     clean_up_processes(master_pid, pids)
   end
 
+  # ROW 7 (unified-cluster): the same parent-death path, FORCED instead of raced - row 34 proved it
+  # with a probe outside the suite, and this is the promoted form. ONE forced interleaving: the
+  # master forks its children with a `fork_worker` hook installed BEFORE `run!` reaches the fork,
+  # so the SIGSTOP of each just-forked child is ARMED BEFORE THE TRIGGER. Every counted attempt is
+  # PROVEN from /proc before the master is killed - every child must be state 'T', still parented
+  # to the master, and still carrying the MASTER's cmdline, which proves `Process.setproctitle`
+  # (the child's first statement, before the arming one) never ran. An attempt whose STOP lost the
+  # race is DISCARDED, never counted. Returns :discarded, or [survivors, port] for a counted
+  # attempt: the children that outlived the master by the stated deadline, and the port they
+  # inherited from it.
+  def forced_orphan_attempt(master_title, workers: 2, proof_seconds: 2.0, survivor_seconds: 2.0)
+    reader, writer = IO.pipe
+    master_pid = fork do
+      reader.close
+      Process.setproctitle(master_title)
+      server = Takagi::Server::Tcp.new(port: 0, worker_processes: workers)
+      cluster = server.cluster
+      original = cluster.method(:fork_worker)
+      # The SIGSTOP is issued by the MASTER the instant the fork returns, so the child is frozen in
+      # the parent branch before it can run its first statement. The stopper is a closure, because
+      # inside the singleton method `self` is the cluster, not this example.
+      stopper = lambda do |pid|
+        Process.kill('STOP', pid)
+      rescue Errno::ESRCH
+        nil
+      end
+      cluster.define_singleton_method(:fork_worker) do |index|
+        pid = original.call(index)
+        stopper.call(pid)
+        pid
+      end
+      writer.puts "PORT #{bound_port(server)}"
+      writer.flush
+      server.run!
+      exit!(0)
+    end
+    writer.close
+
+    port = await_value(10) do
+      next nil unless reader.wait_readable(0.2)
+
+      line = reader.gets
+      line && line[/\APORT (\d+)/, 1]&.to_i
+    end
+    raise 'the forked master never reported its port' if port.nil?
+
+    proof = await_value(proof_seconds) do
+      kids = worker_children_of(master_pid)
+      next nil unless kids.size == workers
+
+      fields = kids.map { |pid| [pid, pid_state(pid), ppid_of(pid), worker_title(pid)] }
+      # A child that already carries its own title has armed itself, so this STOP lost the race.
+      next :lost if fields.any? { |_pid, _state, _ppid, title| title != master_title }
+
+      fields.all? { |_pid, state, ppid, _title| state == 'T' && ppid == master_pid } ? kids : nil
+    end
+
+    if proof.nil? || proof == :lost
+      discard_orphan_attempt(master_pid)
+      return :discarded
+    end
+
+    # THE TRIGGER: the master dies while its children are frozen BEFORE their first statement, so
+    # whatever they do next is decided by the value the cluster armed them with.
+    Process.kill('KILL', master_pid)
+    Process.waitpid(master_pid)
+    proof.each { |pid| kill_quietly(pid, 'CONT') }
+
+    survivors = await_value(survivor_seconds) do
+      alive = proof.reject { |pid| [nil, 'Z'].include?(pid_state(pid)) }
+      alive.empty? ? [] : nil
+    end || proof.dup
+    survivors.each { |pid| kill_quietly(pid) }
+    await_value(2) { proof.all? { |pid| [nil, 'Z'].include?(pid_state(pid)) } ? true : nil }
+    [survivors, port]
+  ensure
+    reader&.close
+  end
+
+  # A discarded attempt still forked children, and they must end BEFORE the master, or the master's
+  # death reparents them and they keep serving on the inherited listener.
+  def discard_orphan_attempt(master_pid)
+    worker_children_of(master_pid).each do |pid|
+      kill_quietly(pid, 'CONT')
+      kill_quietly(pid)
+    end
+    kill_quietly(master_pid)
+    Process.waitpid(master_pid)
+  rescue Errno::ECHILD, Errno::ESRCH
+    nil
+  end
+
+  # PROOF (row 7): the headline GUARD above only proves that children ALREADY ARMED notice a dead
+  # master; this forces the harder interleaving - the master dies BEFORE a child runs at all, which
+  # is what the pre-fork capture exists for. Discriminating mutation: arming the cluster with
+  # `Process.ppid` instead of the captured master pid (`Cluster#reset_child_state`) turns every
+  # counted attempt into a child that adopts the reaper and holds the listener forever.
+  # "repetitions (>= 10) for anything timing-shaped": the SIGSTOP must beat a child's first
+  # statement, so the choreography is repeated and every repetition is proven pre-arm.
+  it 'leaves no child holding the listener when the master dies before a child ever runs' do
+    master_title = 'takagi-worker-tcp-spec-orphan-master'
+    counted = 0
+    discarded = 0
+    attempts = 0
+    survivors = []
+
+    while counted < 10 && attempts < 200
+      attempts += 1
+      outcome = forced_orphan_attempt(master_title)
+      if outcome == :discarded
+        discarded += 1
+        next
+      end
+
+      found, = outcome
+      counted += 1
+      survivors.concat(found)
+    end
+
+    # The choreography must really have happened, or a green would prove nothing about the race.
+    expect(counted).to eq(10),
+                       "only #{counted} of 10 forced interleavings were PROVEN in #{attempts} " \
+                       "attempts (#{discarded} discarded)"
+    expect(survivors).to be_empty,
+                          "#{survivors.size} child(ren) outlived the master that forked them: " \
+                          "#{survivors.inspect}"
+  end
+
   it 'terminates the workers before it closes the listening socket' do
     pids = []
     server = Takagi::Server::Tcp.new(port: 0, worker_processes: 2)
-    server.send(:spawn_workers)
+    server.cluster.send(:spawn_workers)
     pids = server.worker_pids.dup
     listener = server.instance_variable_get(:@server)
-    original = Takagi::Server::Tcp.instance_method(:terminate_workers).bind(server)
+    cluster = server.cluster
+    original = Takagi::Server::Cluster.instance_method(:terminate_workers).bind(cluster)
     closed_while_terminating = nil
-    server.define_singleton_method(:terminate_workers) do
+    cluster.define_singleton_method(:terminate_workers) do
       closed_while_terminating = listener.closed?
       original.call
     end
@@ -611,7 +759,7 @@ RSpec.describe 'Takagi TCP multi-worker server' do
   it 'escalates to KILL inside a bounded per-batch deadline when workers ignore TERM' do
     pids = []
     server = Takagi::Server::Tcp.new(port: 0, worker_processes: 3)
-    server.send(:spawn_workers)
+    server.cluster.send(:spawn_workers)
     pids = server.worker_pids.dup
     expect(pids.size).to eq(3)
 
@@ -620,13 +768,13 @@ RSpec.describe 'Takagi TCP multi-worker server' do
     pids.each { |pid| Process.kill('STOP', pid) }
     expect(await_pid_states(pids, ['T']).values).to eq(%w[T T T])
 
-    bound = Takagi::Server::Tcp::WORKER_TERM_TIMEOUT + 1.0
+    bound = Takagi::Server::Cluster::WORKER_TERM_TIMEOUT + 1.0
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    expect { Timeout.timeout(bound) { server.send(:terminate_workers) } }.not_to raise_error
+    expect { Timeout.timeout(bound) { server.cluster.send(:terminate_workers) } }.not_to raise_error
     elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 
     expect(elapsed).to be <= bound
-    expect(elapsed).to be >= (Takagi::Server::Tcp::WORKER_TERM_TIMEOUT * 0.5)
+    expect(elapsed).to be >= (Takagi::Server::Cluster::WORKER_TERM_TIMEOUT * 0.5)
     expect(pids.map { |pid| pid_state(pid) }).to eq([nil] * pids.size)
   ensure
     clean_up_processes(nil, pids)
@@ -668,8 +816,8 @@ RSpec.describe 'Takagi TCP multi-worker server' do
       expect(restored.size).to eq(3)
       expect(restored).to include(*(pids - [victim]))
       # The replacement takes over the dead worker's index, so its title is truthful.
-      expect(await_worker_title(replacement, "takagi-worker-tcp-#{pids.index(victim)}"))
-        .to eq("takagi-worker-tcp-#{pids.index(victim)}")
+      expect(await_worker_title(replacement, "takagi-worker-#{pids.index(victim)}"))
+        .to eq("takagi-worker-#{pids.index(victim)}")
 
       # The restored pool serves a real exchange, and no snapshot ever reported more
       # workers than the configured count.
@@ -679,12 +827,12 @@ RSpec.describe 'Takagi TCP multi-worker server' do
 
       # One honest line per death: the dead pid, its status, its index and the pid that
       # replaced it - and never a second line for the same death.
-      death = report.await(seconds: 10) { |line| line.include?("TCP worker #{victim}") }
+      death = report.await(seconds: 10) { |line| line.include?("worker #{victim}") }
       expect(death).not_to be_nil, "no death line; saw #{report.lines.inspect}"
-      expect(death).to include("TCP worker #{victim} (index #{pids.index(victim)})")
+      expect(death).to include("worker #{victim} (index #{pids.index(victim)})")
       expect(death).to include('respawned as')
       expect(death).to include(replacement.to_s)
-      expect(report.lines.count { |line| line.include?("TCP worker #{victim}") }).to eq(1)
+      expect(report.lines.count { |line| line.include?("worker #{victim}") }).to eq(1)
 
       # Teardown through the real surface: TERM the master and prove the master, the
       # replacement and its siblings are all gone rather than lingering.
@@ -744,7 +892,7 @@ RSpec.describe 'Takagi TCP multi-worker server' do
       expect(done).not_to be_nil, "the supervision loop never ended; saw #{report.lines.inspect}"
       expect(done).to include('shutdown_called=true')
       expect(done).to include('closed=true')
-      expect(report.lines).to include(a_string_matching(/\AERROR .*all TCP workers are gone/))
+      expect(report.lines).to include(a_string_matching(/\AERROR .*all workers are gone/))
 
       # The port is not silently held by a master with no workers: the master exits on
       # its own and the port refuses connections.
@@ -762,12 +910,12 @@ RSpec.describe 'Takagi TCP multi-worker server' do
   # that moves the spawn ahead of the flag check would ship a child nobody stops.
   it 'does not respawn a dead child once a shutdown has been requested' do
     server = Takagi::Server::Tcp.new(port: 0, worker_processes: 2)
-    server.send(:spawn_workers)
+    server.cluster.send(:spawn_workers)
     pids = server.worker_pids.dup
-    server.instance_variable_set(:@shutdown_requested, true)
+    server.cluster.stop!
     Process.kill('KILL', pids.first)
 
-    server.send(:supervise_workers)
+    server.cluster.send(:supervise_workers)
 
     expect(server.worker_pids).to eq(pids)
   ensure
@@ -782,8 +930,8 @@ RSpec.describe 'Takagi TCP multi-worker server' do
     consumed = nil
     survivors = []
     replacement = nil
-    server = InterlockedTcp.new(port: 0, worker_processes: 3)
-    server.interlock = lambda do
+    server = Takagi::Server::Tcp.new(port: 0, worker_processes: 3)
+    interlock = lambda do
       # The pass is at its first pid now. A real second reaper thread kills a child the
       # pass has not reached and consumes its status - what terminate_workers does when
       # a concurrent shutdown! lands inside a pass.
@@ -794,6 +942,7 @@ RSpec.describe 'Takagi TCP multi-worker server' do
         consumed = victim
       end
     end
+    interlock_cluster_spawn!(server.cluster, interlock)
     runner = Thread.new { server.run! }
 
     # The pass finished the moment it replaced the interlocked list with its own result:
@@ -1037,7 +1186,7 @@ RSpec.describe 'Takagi TCP multi-worker server' do
     opened = []
     stopped = []
     begin
-      server.send(:spawn_workers)
+      server.cluster.send(:spawn_workers)
       pids = server.worker_pids.dup
       expect(pids.size).to eq(worker_processes)
       first, second = pids
@@ -1137,7 +1286,7 @@ RSpec.describe 'Takagi TCP multi-worker server' do
     stopped = []
     accepted_by = []
     begin
-      server.send(:spawn_workers)
+      server.cluster.send(:spawn_workers)
       pids = server.worker_pids.dup
       expect(pids.size).to eq(3)
       port = bound_port(server)
@@ -1155,8 +1304,8 @@ RSpec.describe 'Takagi TCP multi-worker server' do
         _socket, worker = served_connection(port, log, opened)
         accepted_by << worker
         expect(worker).to eq(pid)
-        expect(await_worker_title(pid, "takagi-worker-tcp-#{index}"))
-          .to eq("takagi-worker-tcp-#{index}")
+        expect(await_worker_title(pid, "takagi-worker-#{index}"))
+          .to eq("takagi-worker-#{index}")
       end
 
       # Every child took its turn, in the order the choreography forced: that is the

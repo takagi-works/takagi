@@ -1,7 +1,11 @@
 # frozen_string_literal: true
 
 RSpec.describe Takagi::Server::UdpWorker do
-  def build_worker(parent_pid:, shutdown:, sender: nil, logger: Takagi.logger)
+  # The worker is armed by whoever drives its loop: the cluster hands it a stop predicate
+  # that already carries the parent-death guard (its master pid was captured before the
+  # fork), and the worker compares against that - never against a parent pid it reads for
+  # itself after the fork.
+  def build_worker(shutdown:, driver_stop: false, sender: nil, logger: Takagi.logger)
     worker = described_class.new(
       socket: nil,
       middleware_stack: nil,
@@ -9,9 +13,9 @@ RSpec.describe Takagi::Server::UdpWorker do
       sender: sender,
       logger: logger,
       port: 5683,
-      threads: 1
+      threads: 1,
+      stop_requested: -> { driver_stop }
     )
-    worker.instance_variable_set(:@parent_pid, parent_pid)
     worker.instance_variable_set(:@shutdown, shutdown)
     worker
   end
@@ -68,19 +72,19 @@ RSpec.describe Takagi::Server::UdpWorker do
     reply
   end
 
-  let(:worker) { build_worker(parent_pid: Process.ppid, shutdown: false) }
+  let(:worker) { build_worker(shutdown: false) }
 
   describe '#stop_requested?' do
     it 'is true after a shutdown signal' do
-      expect(build_worker(parent_pid: Process.ppid, shutdown: true).send(:stop_requested?)).to be(true)
+      expect(build_worker(shutdown: true).send(:stop_requested?)).to be(true)
     end
 
-    it 'is true when the parent process is gone' do
-      expect(build_worker(parent_pid: Process.ppid + 1, shutdown: false).send(:stop_requested?)).to be(true)
+    it 'is true when the driver reports the parent process gone' do
+      expect(build_worker(shutdown: false, driver_stop: true).send(:stop_requested?)).to be(true)
     end
 
-    it 'is false while running under a live parent with no signal' do
-      expect(build_worker(parent_pid: Process.ppid, shutdown: false).send(:stop_requested?)).to be(false)
+    it 'is false while the driver reports a live parent and no signal arrived' do
+      expect(build_worker(shutdown: false).send(:stop_requested?)).to be(false)
     end
   end
 
@@ -144,7 +148,7 @@ RSpec.describe Takagi::Server::UdpWorker do
 
     it 'logs the ignored type and Message ID' do
       captured = []
-      logging_worker = build_worker(parent_pid: Process.ppid, shutdown: false, logger: recording_logger(captured))
+      logging_worker = build_worker(shutdown: false, logger: recording_logger(captured))
 
       immediate_response(logging_worker, with_message_id(0x60, 0x1234))
 
@@ -164,7 +168,7 @@ RSpec.describe Takagi::Server::UdpWorker do
 
     it 'sends byte-identical bytes for a retransmitted ping' do
       captured = []
-      handling_worker = build_worker(parent_pid: Process.ppid, shutdown: false, sender: sender_capturing(captured))
+      handling_worker = build_worker(shutdown: false, sender: sender_capturing(captured))
       packet = empty_con(0x5150)
 
       handling_worker.send(:handle_request, packet, addr)
@@ -178,7 +182,7 @@ RSpec.describe Takagi::Server::UdpWorker do
 
     it 'does not route an ignored message to the middleware' do
       captured = []
-      handling_worker = build_worker(parent_pid: Process.ppid, shutdown: false, sender: sender_capturing(captured))
+      handling_worker = build_worker(shutdown: false, sender: sender_capturing(captured))
 
       handling_worker.send(:handle_request, with_message_id(0x60, 0x6161), addr)
 
@@ -188,7 +192,7 @@ RSpec.describe Takagi::Server::UdpWorker do
     it 'logs a ParseError naming the peer and the length, and replies with nothing, for a short datagram' do
       captured = []
       logs = []
-      handling_worker = build_worker(parent_pid: Process.ppid, shutdown: false,
+      handling_worker = build_worker(shutdown: false,
                                      sender: sender_capturing(captured), logger: recording_logger(logs))
 
       handling_worker.send(:handle_request, datagram(0x40, 0x00), addr)
@@ -202,7 +206,7 @@ RSpec.describe Takagi::Server::UdpWorker do
 
     it 'keeps serving after a malformed datagram' do
       captured = []
-      handling_worker = build_worker(parent_pid: Process.ppid, shutdown: false, sender: sender_capturing(captured))
+      handling_worker = build_worker(shutdown: false, sender: sender_capturing(captured))
 
       handling_worker.send(:handle_request, datagram(0x40), addr)
       handling_worker.send(:handle_request, empty_con(0x4242), addr)

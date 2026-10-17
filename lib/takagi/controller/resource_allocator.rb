@@ -23,6 +23,10 @@ module Takagi
     #     total_threads: 40
     #   )
     #   # Divides 40 threads proportionally based on profile weights
+    #
+    # It allocates THREADS only. A controller's process count is not a pool this allocator
+    # can hand out: a worker process serves a whole transport, so per-controller process
+    # isolation belongs to a proxy with one backend per controller, not to this allocator.
     class ResourceAllocator
       # Profile weights for automatic allocation
       # Higher weight = more resources
@@ -41,25 +45,23 @@ module Takagi
         # @param controllers [Array<Class>] Controller classes to allocate to
         # @param mode [Symbol] :manual or :automatic
         # @param total_threads [Integer] Total threads available (for automatic mode)
-        # @param protocol [Symbol] :udp or :tcp (affects process allocation)
         # @return [Hash] Map of controller class => allocation hash
         #
         # @example
         #   allocations = ResourceAllocator.allocate(
         #     controllers: [IngressController, ConfigController],
-        #     mode: :automatic,
-        #     total_threads: 40
+        #     mode: :manual
         #   )
         #   # => {
-        #   #   IngressController => { threads: 30, processes: nil },
-        #   #   ConfigController => { threads: 10, processes: nil }
+        #   #   IngressController => { threads: 30, mode: :manual },
+        #   #   ConfigController => { threads: 2, mode: :manual }
         #   # }
-        def allocate(controllers:, mode: :automatic, total_threads: nil, protocol: :tcp)
+        def allocate(controllers:, mode: :automatic, total_threads: nil)
           case mode
           when :manual
-            allocate_manual(controllers, protocol: protocol)
+            allocate_manual(controllers)
           when :automatic
-            allocate_automatic(controllers, total_threads: total_threads, protocol: protocol)
+            allocate_automatic(controllers, total_threads: total_threads)
           else
             raise ArgumentError, "Unknown allocation mode: #{mode}. Use :manual or :automatic"
           end
@@ -84,28 +86,25 @@ module Takagi
         private
 
         # Manual allocation - use controller's explicit configuration
-        def allocate_manual(controllers, protocol:)
+        def allocate_manual(controllers)
           controllers.each_with_object({}) do |controller_class, allocations|
             threads = controller_class.thread_count
-            processes = protocol == :udp ? controller_class.process_count : nil
 
-            # Fall back to minimal profile if nothing specified
-            if threads.nil? && processes.nil?
-              profile = Profiles.get(:minimal)
-              threads = profile[:threads]
-              processes = protocol == :udp ? profile[:processes] : nil
-            end
+            # A controller that declares no thread count falls back to the minimal profile.
+            # The fallback keys on the thread count ALONE: a controller that declares only
+            # `processes` must still receive a usable thread count, or the pool loop skips
+            # it (Application#start_all_workers! starts a pool only for a positive value).
+            threads = Profiles.get(:minimal)[:threads] if threads.nil?
 
             allocations[controller_class] = {
               threads: threads,
-              processes: processes,
               mode: :manual
             }
           end
         end
 
         # Automatic allocation - divide total_threads based on profile weights
-        def allocate_automatic(controllers, total_threads:, protocol:)
+        def allocate_automatic(controllers, total_threads:)
           raise ArgumentError, 'total_threads required for automatic allocation' unless total_threads
 
           # Calculate total weight
@@ -129,7 +128,6 @@ module Takagi
 
             allocations[controller_class] = {
               threads: threads,
-              processes: protocol == :udp ? calculate_processes(threads) : nil,
               mode: :automatic,
               weight: weight
             }
@@ -142,21 +140,6 @@ module Takagi
         def controller_weight(controller_class)
           profile_name = controller_class.profile_name || :minimal
           PROFILE_WEIGHTS[profile_name] || PROFILE_WEIGHTS[:custom]
-        end
-
-        # Calculate reasonable process count based on thread count (UDP only)
-        # Uses heuristic: fewer processes with more threads each
-        def calculate_processes(threads)
-          case threads
-          when 1..2
-            1
-          when 3..8
-            2
-          when 9..16
-            4
-          else
-            [threads / 4, 8].min  # Max 8 processes
-          end
         end
       end
     end

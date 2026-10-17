@@ -52,35 +52,85 @@ RSpec.describe Takagi::Base::ServerLifecycle do
     log_io.string.lines.grep(/WARN/)
   end
 
-  describe 'a per-protocol processes count (PROOF)' do
-    it 'reaches the TCP server as its worker process count' do
-      server = configured_processes(:tcp, protocol_settings: { tcp: { processes: 4 } }, global_processes: 1)
+  # Row 3 of .omo/plans/unified-cluster.md: a service has ONE worker count. The top-level
+  # `processes` is the count the cluster forks and it reaches EVERY transport the service
+  # exposes; a per-protocol `processes` survives only as a compatibility alias, accepted
+  # solely when it restates that one count.
+  describe 'the one worker count of a service (row 3)' do
+    def built_for_processes(protocols, protocol_settings:, processes: 1, written: [])
+      allow(config).to receive_messages(protocol_settings: protocol_settings, threads: 1, processes: processes)
+      written_keys_stub(*written)
+      lifecycle.send(:build_servers, protocols, 0).tap { |built| servers.concat(built) }
+    end
 
-      expect(server.instance_variable_get(:@worker_processes)).to eq(4)
+    it 'reaches BOTH transports from the written global count (PROOF)' do
+      udp_server, tcp_server = built_for_processes(%i[udp tcp], protocol_settings: {}, processes: 2,
+                                                                    written: [:processes])
+
+      expect(udp_server.instance_variable_get(:@worker_processes)).to eq(2)
+      expect(tcp_server.instance_variable_get(:@worker_processes)).to eq(2)
+      expect(warnings).to be_empty
+    end
+
+    it 'accepts a lone per-protocol count as the service count and applies it to both transports (GUARD A)' do
+      udp_server, tcp_server = built_for_processes(%i[udp tcp], protocol_settings: { tcp: { processes: 2 } })
+
+      expect(tcp_server.instance_variable_get(:@worker_processes)).to eq(2)
+      expect(udp_server.instance_variable_get(:@worker_processes)).to eq(2)
+      expect(warnings).to be_empty
+    end
+
+    it 'accepts a per-protocol alias that restates the written global count (GUARD)' do
+      udp_server, tcp_server = built_for_processes(%i[udp tcp],
+                                                   protocol_settings: { udp: { processes: 3 }, tcp: { processes: 3 } },
+                                                   processes: 3, written: [:processes])
+
+      expect(udp_server.instance_variable_get(:@worker_processes)).to eq(3)
+      expect(tcp_server.instance_variable_get(:@worker_processes)).to eq(3)
+      expect(warnings).to be_empty
+    end
+
+    it 'raises for two per-protocol counts that disagree (PROOF 2)' do
+      allow(config).to receive(:protocol_settings).and_return(udp: { processes: 2 }, tcp: { processes: 3 })
+      allow(config).to receive(:processes).and_return(1)
+      written_keys_stub
+
+      expect { lifecycle.send(:build_servers, %i[udp tcp], 0) }.to raise_error(ArgumentError) do |error|
+        expect(error.message).to include('ONE worker count')
+        expect(error.message).to include('protocol_settings[:udp][:processes] = 2')
+        expect(error.message).to include('protocol_settings[:tcp][:processes] = 3')
+      end
+    end
+
+    it 'raises when a written global count and a per-protocol alias disagree (PROOF)' do
+      allow(config).to receive(:protocol_settings).and_return(tcp: { processes: 2 })
+      allow(config).to receive(:processes).and_return(4)
+      written_keys_stub(:processes)
+
+      expect { lifecycle.send(:build_servers, %i[udp tcp], 0) }.to raise_error(ArgumentError) do |error|
+        expect(error.message).to include('ONE worker count')
+        expect(error.message).to include('the top-level `processes` = 4')
+        expect(error.message).to include('protocol_settings[:tcp][:processes] = 2')
+      end
+    end
+
+    it 'raises before it builds anything, so a disagreeing config never boots (GUARD)' do
+      allow(config).to receive(:protocol_settings).and_return(udp: { processes: 2 }, tcp: { processes: 3 })
+      expect(Takagi::Server::Registry).not_to receive(:build)
+
+      expect { lifecycle.send(:build_servers, %i[udp tcp], 0) }.to raise_error(ArgumentError)
+    end
+
+    it 'raises nothing and warns nothing when no processes key was written (GUARD B)' do
+      udp_server, tcp_server = built_for_processes(%i[udp tcp], protocol_settings: {}, processes: 1)
+
+      expect(udp_server.instance_variable_get(:@worker_processes)).to eq(1)
+      expect(tcp_server.instance_variable_get(:@worker_processes)).to eq(1)
       expect(warnings).to be_empty
     end
   end
 
-  describe 'a global-only processes count (PROOF + GUARD)' do
-    it 'emits exactly one warning naming the key, the protocol, the reason and the remedy' do
-      configured_processes(:tcp, protocol_settings: {}, global_processes: 4, written: [:processes])
-
-      expect(warnings.size).to eq(1)
-      warning = warnings.first
-      expect(warning).to include('processes')
-      expect(warning).to include(':tcp')
-      expect(warning).to include('per-protocol')
-      expect(warning).to include('protocol_settings: { tcp: { processes: 4 } }')
-    end
-
-    it 'still runs one process and does not fork TCP (GUARD)' do
-      server = configured_processes(:tcp, protocol_settings: {}, global_processes: 4)
-
-      expect(server.instance_variable_get(:@worker_processes)).to eq(1)
-    end
-  end
-
-  describe 'the UDP transport is untouched (GUARDS)' do
+  describe 'the UDP transport keeps working the same way (GUARDS)' do
     it 'keeps consuming the global processes count without warning' do
       server = configured_processes(:udp, protocol_settings: {}, global_processes: 4)
 
@@ -88,7 +138,7 @@ RSpec.describe Takagi::Base::ServerLifecycle do
       expect(warnings).to be_empty
     end
 
-    it 'still lets the per-protocol count win over the global one' do
+    it 'takes a lone per-protocol count as the service count when the global key is unwritten' do
       server = configured_processes(:udp, protocol_settings: { udp: { processes: 2 } }, global_processes: 4)
 
       expect(server.instance_variable_get(:@worker_processes)).to eq(2)
@@ -219,13 +269,11 @@ RSpec.describe Takagi::Base::ServerLifecycle do
       expect(warnings.size).to eq(1)
     end
 
-    it 'emits row 4s single global-processes warning and no second one for the same key (C34)' do
-      built_servers([:tcp], protocol_settings: {}, processes: 4, written: [:processes])
+    it 'sends the written global processes count to TCP with no warning (row 3 supersedes row 4s warning)' do
+      server = built_servers([:tcp], protocol_settings: {}, processes: 4, written: [:processes]).first
 
-      expect(warnings.size).to eq(1)
-      expect(warnings.first).to include('processes')
-      expect(warnings.first).to include('protocol_settings: { tcp: { processes: 4 } }')
-      expect(warnings.first).not_to include('threads:')
+      expect(server.instance_variable_get(:@worker_processes)).to eq(4)
+      expect(warnings).to be_empty
     end
   end
 
@@ -261,53 +309,49 @@ RSpec.describe Takagi::Base::ServerLifecycle do
       expect(warnings.first).to include('threads: 2')
     end
 
-    it 'keeps row 4s processes warning and the threads warning distinct and single (C34 GUARD)' do
+    it 'reports only the threads key now that every transport consumes processes (row 3 GUARD)' do
       allow(config).to receive_messages(protocol_settings: {}, processes: 4)
       written_keys_stub(:processes, :threads)
       lifecycle.send(:build_servers, [:tcp], 0).tap { |built| servers.concat(built) }
 
-      expect(warnings.size).to eq(2)
-      expect(warnings.count { |w| w.include?('`processes:') }).to eq(1)
-      expect(warnings.count { |w| w.include?('`threads:') }).to eq(1)
+      expect(warnings.size).to eq(1)
+      expect(warnings.first).to include('`threads:')
+      expect(warnings.grep(/`processes:/)).to be_empty
     end
   end
 
-  # Row 24 of .omo/plans/tcp-multi-worker.md: `processes` joins `threads` on the presence trigger,
-  # so the two global keys that share the "this target cannot consume it" status are reported alike
-  # for the same written value. The key is recorded where the YAML path assigns it
-  # (`Config#assign_processes`, which bypasses `assign_setting`) - config_spec pins that path.
-  describe 'the written-global-processes trigger (row 24)' do
+  # Row 3 of .omo/plans/unified-cluster.md: every transport now consumes `processes`, so row 24's
+  # written-global warning has no premise left - the written count is APPLIED to every transport
+  # instead of being reported. The presence carrier row 24 pinned still decides what counts as
+  # WRITTEN (config_spec pins it), and it is what tells the untouched default apart from a written
+  # count here.
+  describe 'the retired written-global-processes warning (row 3)' do
     def built_for_written_processes(protocols, protocol_settings:, processes:, written:, threads: 1)
       allow(config).to receive_messages(protocol_settings: protocol_settings, threads: threads, processes: processes)
       written_keys_stub(*written)
       lifecycle.send(:build_servers, protocols, 0).tap { |built| servers.concat(built) }
     end
 
-    it 'warns exactly once for a WRITTEN global processes: 1 a TCP target cannot consume (PROOF)' do
-      built_for_written_processes([:udp, :tcp], protocol_settings: {}, processes: 1, written: [:processes])
+    it 'applies a WRITTEN global processes: 1 to every transport without a word (PROOF)' do
+      udp_server, tcp_server = built_for_written_processes(%i[udp tcp], protocol_settings: {}, processes: 1,
+                                                                          written: [:processes])
 
-      expect(warnings.size).to eq(1)
-      expect(warnings.first).to include('processes: 1')
-      expect(warnings.first).to include(':tcp')
-      expect(warnings.first).to include('protocol_settings: { tcp: { processes: 1 } }')
-    end
-
-    it 'stays silent when the global processes key was never written (GUARD)' do
-      built_for_written_processes([:udp, :tcp], protocol_settings: {}, processes: 1, written: [])
-
+      expect(udp_server.instance_variable_get(:@worker_processes)).to eq(1)
+      expect(tcp_server.instance_variable_get(:@worker_processes)).to eq(1)
       expect(warnings).to be_empty
     end
 
-    it 'still warns exactly once for a written count of 4, with row 4s own text (GUARD)' do
-      built_for_written_processes([:tcp], protocol_settings: {}, processes: 4, written: [:processes])
+    it 'carries a written global count of 3 into both transports (GUARD)' do
+      udp_server, tcp_server = built_for_written_processes(%i[udp tcp], protocol_settings: {}, processes: 3,
+                                                                          written: [:processes])
 
-      expect(warnings.size).to eq(1)
-      expect(warnings.first).to include('it is a server-wide default')
-      expect(warnings.first).to include('protocol_settings: { tcp: { processes: 4 } }')
+      expect(udp_server.instance_variable_get(:@worker_processes)).to eq(3)
+      expect(tcp_server.instance_variable_get(:@worker_processes)).to eq(3)
+      expect(warnings).to be_empty
     end
 
-    it 'keeps the untouched default silent, exactly as the threads key does (GUARD)' do
-      built_for_written_processes([:udp, :tcp], protocol_settings: {}, processes: 1, written: [], threads: 1)
+    it 'still stays silent for the untouched default (GUARD)' do
+      built_for_written_processes(%i[udp tcp], protocol_settings: {}, processes: 1, written: [])
 
       expect(warnings).to be_empty
     end
@@ -349,20 +393,23 @@ RSpec.describe Takagi::Base::ServerLifecycle do
       expect(warnings).to be_empty
     end
 
-    # Row 29 of .omo/plans/tcp-multi-worker.md: the programmatic `processes=` writer records
-    # presence like `threads=` does, so a written global count a TCP target cannot consume is
-    # reported instead of being accepted in silence. The carrier is the real singleton here, so
-    # the `after` hook hands it back (never depend on spec order).
-    it 'warns for a programmatic processes write a TCP target cannot consume (PROOF, row 29)' do
+    # Row 3 of .omo/plans/unified-cluster.md: a programmatic global write is no longer an
+    # unconsumed key - every transport forks the one count - so it reaches both servers and warns
+    # nothing. The carrier is the real singleton here, so the example hands it back (never depend
+    # on spec order); the presence it records is still pinned in config_spec.
+    it 'reaches BOTH transports for a programmatic processes write (row 3)' do
+      Takagi.config.processes = 2
+      allow(config).to receive_messages(protocol_settings: {}, max_connections: nil)
+      allow(config).to receive(:written?).and_call_original
+
+      built = lifecycle.send(:build_servers, %i[udp tcp], 0)
+      servers.concat(built)
+
+      expect(built.map { |server| server.instance_variable_get(:@worker_processes) }).to eq([2, 2])
+      expect(warnings).to be_empty
+    ensure
       Takagi.config.processes = 1
-
-      expect(Takagi.config.written?(:processes)).to be(true)
-
-      build_with_the_real_carrier
-
-      expect(warnings.size).to eq(1)
-      expect(warnings.first).to include('processes: 1')
-      expect(warnings.first).to include(':tcp')
+      Takagi.config.reset_written_keys!
     end
   end
 

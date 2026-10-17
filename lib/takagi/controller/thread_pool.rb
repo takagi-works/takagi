@@ -27,6 +27,7 @@ module Takagi
         @queue = Queue.new
         @workers = []
         @shutdown = false
+        @owner_pid = Process.pid
         @mutex = Mutex.new
         @stats = {
           processed: 0,
@@ -73,6 +74,17 @@ module Takagi
       # @return [Boolean] true if shutdown
       def shutdown?
         @shutdown
+      end
+
+      # Check whether this pool's worker threads live in the calling process
+      #
+      # The pool OBJECT survives a `fork`; its threads do not. A child that inherited a
+      # parent's pool must not schedule into it, so anything delegating to a pool asks this
+      # first.
+      #
+      # @return [Boolean] true when the pool was created by the calling process
+      def running_in_this_process?
+        @owner_pid == Process.pid
       end
 
       # Get current pool statistics

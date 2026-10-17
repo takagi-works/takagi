@@ -35,8 +35,20 @@ module Takagi
 
       def stop
         @running = false
-        @thread&.wakeup if @thread&.alive?
-        @thread&.join(2) # Wait max 2 seconds
+        thread = @thread
+        return unless thread
+
+        begin
+          thread.wakeup if thread.alive?
+        rescue ThreadError
+          # `Thread#wakeup` raises ThreadError ("killed thread") on a thread that is no
+          # longer alive, so a watcher thread that finishes between the liveness check
+          # and the wakeup has nothing to wake - the race this guard used to lose. Only a
+          # thread that is still alive turns that failure into a real error, so re-raise
+          # in that case and tolerate nothing else.
+          raise if thread.alive?
+        end
+        thread.join(2) # Wait max 2 seconds
       end
     end
   end

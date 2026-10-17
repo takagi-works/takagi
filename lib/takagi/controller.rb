@@ -172,6 +172,16 @@ module Takagi
       # Lazy initialization: creates pool on first access if not already started.
       # This allows reactors to share the controller's pool automatically.
       #
+      # This pool is what a controller's `threads` buys: its own work, and nothing else. No
+      # server-wide value overrides it, and neither transport serves a request from it in
+      # place of its own serving path - a UDP worker delegates a request whose path maps to
+      # this controller (see Server::UdpWorker#delegate_to_controller_pool), while TCP keeps
+      # the connection-thread model, where one thread per connection reads and writes in
+      # order (see Server::Tcp#build_response). A forked worker does NOT get a pool of its
+      # own: threads do not survive `fork`, and a per-child pool would cost memory on a
+      # constrained device while still being per process, so the child serves synchronously
+      # instead.
+      #
       # @return [ThreadPool] Thread pool instance
       def thread_pool
         @thread_pool ||= begin
@@ -218,11 +228,15 @@ module Takagi
         @thread_pool.schedule(&block)
       end
 
-      # Check if the controller's thread pool is running
+      # Check if the controller's thread pool is running IN THIS PROCESS
       #
-      # @return [Boolean] true if thread pool is active
+      # Object existence and the shutdown flag are not enough: a forked child inherits the
+      # pool object with its threads already gone, and a child that scheduled into it would
+      # leave the client with neither a response nor an error - the queue has no drainer.
+      #
+      # @return [Boolean] true if thread pool is active in this process
       def workers_running?
-        @thread_pool && !@thread_pool.shutdown?
+        @thread_pool && !@thread_pool.shutdown? && @thread_pool.running_in_this_process?
       end
 
       private
@@ -307,12 +321,34 @@ module Takagi
       #
       # @param key [Symbol] Configuration key
       # @param value [Object] Configuration value
+      # @raise [ArgumentError] when the key cannot apply to a controller (`max_connections`)
       #
       # @example
       #   set :processes, 16
       #   set :threads, 4
       def set(key, value)
+        reject_unconsumable!(key, value)
         @controller.config[key] = value
+      end
+
+      private
+
+      # A controller holds no accepted connections, so `max_connections` - a SERVER setting, the
+      # TCP server's per-worker accepted-connection cap - has nothing to cap when it is written on
+      # a controller, and no code reads it back (row 21 of .omo/plans/tcp-multi-worker.md).
+      # Accepting it would be a silent drop, so it is refused here, naming the controller and the
+      # reason. `set :threads` stays accepted and is consumed by the controller's own pool;
+      # `set :processes` stays accepted for compatibility - nothing consumes it (IS-7).
+      def reject_unconsumable!(key, value)
+        return unless key.to_sym == :max_connections
+
+        raise ArgumentError,
+              "`set :max_connections, #{value.inspect}` cannot apply to controller " \
+              "#{@controller.name}: a controller holds no accepted connections, so nothing " \
+              'consumes it - `max_connections` is a server-level setting, the TCP server\'s ' \
+              'per-worker accepted-connection cap. Write it for the server that accepts ' \
+              'connections instead: `protocol_settings: { tcp: { max_connections: <N> } }` ' \
+              'in takagi.yml.'
       end
     end
   end

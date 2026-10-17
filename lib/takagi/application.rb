@@ -123,12 +123,14 @@ module Takagi
         total_threads = config[:total_threads] || Takagi.config.allocation.total_threads
         controllers_to_allocate = config[:controllers] + [DiscoveryController]
 
-        # Calculate allocations based on mode
+        # Calculate allocations based on mode. The allocation is protocol-neutral: what a
+        # controller gets here is the thread count for its own pool, and a worker process
+        # count is the server's business (a worker serves a whole transport), so the loop
+        # below reads `[:threads]` and nothing else.
         allocations = Controller::ResourceAllocator.allocate(
           controllers: controllers_to_allocate,
           mode: mode,
-          total_threads: total_threads,
-          protocol: :tcp  # TCP uses threads, UDP uses processes
+          total_threads: total_threads
         )
 
         # Validate allocations if automatic mode with total_threads specified
@@ -136,7 +138,10 @@ module Takagi
           Controller::ResourceAllocator.validate!(allocations, total_threads: total_threads)
         end
 
-        # Start each controller's thread pool
+        # Start each controller's thread pool. A controller with nothing to run is not
+        # skipped by accident: the allocator falls back to the minimal profile's thread
+        # count whenever the controller declares none (a `processes`-only controller
+        # included), so `threads` is only nil for a caller that bypassed the allocator.
         allocations.each do |controller_class, allocation|
           threads = allocation[:threads]
           next unless threads && threads > 0

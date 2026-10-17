@@ -292,7 +292,7 @@ module Takagi
         Takagi::Base.router.observable(path, &block)
 
         # Initialize the observable in thread pool
-        @thread_pool.schedule do
+        schedule_in_pool do
           block.call(emitter)
         end
 
@@ -325,7 +325,7 @@ module Takagi
         Takagi::Base.router.observable(path, &block)
 
         # Start polling loop in thread pool
-        @thread_pool.schedule do
+        schedule_in_pool do
           poll_observable(path, interval, &block)
         end
 
@@ -346,7 +346,7 @@ module Takagi
       #     reactor.notify('/summary', calculate_summary)
       #   end
       def notify(path, value)
-        @thread_pool.schedule do
+        schedule_in_pool do
           Observer::Registry.notify(path, value)
         end
       end
@@ -380,7 +380,7 @@ module Takagi
         )
 
         # Start observation in thread pool
-        @thread_pool.schedule do
+        schedule_in_pool do
           client = Observer::Client.new(uri)
           client.on_notify(&block)
           client.subscribe
@@ -456,6 +456,26 @@ module Takagi
       end
 
       private
+
+      # Schedules observer work in the reactor's pool only when that pool lives in THIS process,
+      # and otherwise runs it in the calling thread.
+      #
+      # A reactor that shares a controller's pool holds the pool OBJECT, and a forked child
+      # inherits that object with its threads already gone (threads do not survive `fork`), so a
+      # plain `ThreadPool#schedule` there pushes work into a queue whose drainer died - the
+      # notification vanishes with no trace and the side effect never happens (row 26 of
+      # .omo/plans/tcp-multi-worker.md). The request path refuses to do that - a forked UDP worker
+      # serves synchronously when `Controller#workers_running?` is false - so a child does the same
+      # here and the side effect still happens exactly once.
+      def schedule_in_pool(&block)
+        return @thread_pool.schedule(&block) if @thread_pool.running_in_this_process?
+
+        Takagi.logger.debug(
+          "Reactor '#{@config[:name]}' runs observer work synchronously: its pool belongs to " \
+          'another process (a pool thread does not survive a fork)'
+        )
+        block.call
+      end
 
       def poll_observable(path, interval, &block)
         loop do
