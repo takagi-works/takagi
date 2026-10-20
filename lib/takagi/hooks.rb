@@ -1,32 +1,32 @@
 # frozen_string_literal: true
 
+# `Bus` carries no sub-file requires of its own - `LRUCache` hangs off it
+# from the `event_bus/*` files that `event_bus.rb` loads. A CoAP registry class body emits a hook during
+# Zeitwerk eager_load (`lib/takagi/coap/registries/method.rb`), i.e. before either file has been autoloaded,
+# so the bus load contract is pulled in here rather than left to the call site.
+require_relative 'event_bus'
+
 module Takagi
   # Lightweight hook dispatcher used by the plugin system to observe internal events.
   #
-  # Hooks are intentionally simple: subscribe with a callable, emit with a hash payload.
-  # Errors in subscribers are caught and logged to avoid cascading failures.
+  # Hooks ride the local bus on ONE code path: {subscribe} registers a consumer on {Takagi.bus}
+  # under the reserved `hooks.<event>` address, and {emit} publishes the payload hash to that same
+  # address. A subscriber's error is captured by the bus's own delivery, so it cannot raise out of
+  # {emit} nor stop the subscribers registered after it.
   module Hooks
-    @subscribers = Hash.new { |h, k| h[k] = [] } # Fallback when EventBus unavailable
-    @mutex = Mutex.new
-
     class << self
       # Register a handler for a given event symbol.
       #
       # @param event [Symbol] event name
       # @param handler [#call] callable that receives payload hash
       # @yield [Hash] payload if block given instead of handler
-      # @return [#call] the handler reference (useful for unsubscribe)
+      # @return [String] consumer id, to be passed to {unsubscribe}
       def subscribe(event, handler = nil, &block)
         callback = handler || block
         raise ArgumentError, 'handler or block required' unless callback
 
-        if event_bus_ready?
-          Takagi::EventBus.consumer(hook_address(event), local_only: true) do |message|
-            callback.call(message.body)
-          end
-        else
-          @mutex.synchronize { @subscribers[event] << callback }
-          callback
+        Takagi.bus.consumer(hook_address(event)) do |message|
+          callback.call(message.body)
         end
       end
 
@@ -34,14 +34,13 @@ module Takagi
 
       # Remove a previously registered handler.
       #
-      # @param event [Symbol]
-      # @param handler [#call]
-      def unsubscribe(event, handler)
-        if event_bus_ready?
-          Takagi::EventBus.unregister(handler)
-        else
-          @mutex.synchronize { @subscribers[event].delete(handler) }
-        end
+      # The bus unregisters by the consumer id {subscribe} returned, so the event name is
+      # accepted but unused.
+      #
+      # @param _event [Symbol] the event the handler was subscribed to (unused)
+      # @param handler [String] the consumer id returned by {subscribe}
+      def unsubscribe(_event, handler)
+        Takagi.bus.unregister(handler)
       end
 
       # Emit an event with a payload hash to all subscribers.
@@ -49,35 +48,11 @@ module Takagi
       # @param event [Symbol]
       # @param payload [Hash]
       def emit(event, payload = {})
-        if event_bus_ready?
-          Takagi::EventBus.publish(hook_address(event), payload, freeze_body: false, scope: Takagi::EventBus::Scope::LOCAL)
-        else
-          handlers = @mutex.synchronize { @subscribers[event].dup }
-          return if handlers.empty?
-
-          handlers.each do |handler|
-            handler.call(payload)
-          rescue StandardError => e
-            begin
-              Takagi.logger.warn("Hook #{event} handler error: #{e.message}")
-            rescue StandardError
-              # Logger may not be initialized yet; swallow errors silently.
-            end
-          end
-        end
+        Takagi.bus.publish(hook_address(event), payload, freeze_body: false)
       end
 
       def hook_address(event)
         "hooks.#{event}"
-      end
-
-      def event_bus_ready?
-        return false unless defined?(Takagi::EventBus)
-
-        executor = Takagi::EventBus.executor
-        return false if executor && executor.respond_to?(:running?) && !executor.running?
-
-        true
       end
     end
   end

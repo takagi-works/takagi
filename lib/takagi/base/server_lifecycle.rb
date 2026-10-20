@@ -15,6 +15,10 @@ module Takagi
       def boot!(config_path: 'config/takagi.yml')
         Takagi.config.load_file(config_path) if File.exist?(config_path)
         Takagi::Initializer.run!
+        # ONE background cleaner for the observer subscriptions, started here at boot and
+        # idempotent across repeated boots: Observer::Registry owns both the subscriptions
+        # and the thread that expires them.
+        Takagi::Observer::Registry.start_cleanup
       end
 
       # Runs the server in the foreground (blocking)

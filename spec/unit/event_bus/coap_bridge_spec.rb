@@ -1,10 +1,24 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'timeout'
 
 RSpec.describe Takagi::EventBus::CoAPBridge do
-  # Clean up registered resources before each test
-  before(:each) do
+  let(:app) do
+    Class.new do
+      attr_reader :observables
+
+      def initialize
+        @observables = {}
+      end
+
+      def observable(path, &block)
+        @observables[path] = block
+      end
+    end.new
+  end
+
+  before do
     described_class.clear
   end
 
@@ -52,15 +66,58 @@ RSpec.describe Takagi::EventBus::CoAPBridge do
     end
   end
 
+  describe '.register_observable_resource' do
+    it 'creates the observable path and returns true' do
+      result = described_class.register_observable_resource('sensor.temp.room1', app)
+
+      expect(result).to be true
+      expect(described_class.registered?('sensor.temp.room1')).to be true
+      expect(app.observables.keys).to eq(['/events/sensor/temp/room1'])
+    end
+
+    it 'returns false and keeps the first registration on a repeat call' do
+      described_class.register_observable_resource('sensor.temp.room1', app)
+      second = described_class.register_observable_resource('sensor.temp.room1', app)
+
+      expect(second).to be false
+      expect(described_class.registered_count).to eq(1)
+    end
+
+    it 'serves a constant descriptor rather than bus state' do
+      described_class.register_observable_resource('sensor.temp.room1', app)
+      representation = app.observables.fetch('/events/sensor/temp/room1').call(nil)
+
+      expect(representation).to include(address: 'sensor.temp.room1', status: 'observable')
+      expect(representation[:timestamp]).to be_a(Integer)
+    end
+
+    it 'still serves the descriptor after a publish, so it reads no bus state' do
+      described_class.register_observable_resource('sensor.temp.room1', app)
+      Takagi.bus.publish('sensor.temp.room1', { value: 25.5 })
+
+      representation = app.observables.fetch('/events/sensor/temp/room1').call(nil)
+
+      expect(representation).to include(address: 'sensor.temp.room1', status: 'observable')
+      expect(representation[:body]).to be_nil
+    end
+
+    it 'returns false and unregisters when the app rejects the resource' do
+      allow(app).to receive(:observable).and_raise(StandardError, 'no observable support')
+
+      result = described_class.register_observable_resource('sensor.temp.room1', app)
+
+      expect(result).to be false
+      expect(described_class.registered?('sensor.temp.room1')).to be false
+    end
+  end
+
   describe '.registered?' do
     it 'returns false for unregistered address' do
       expect(described_class.registered?('sensor.temp.room1')).to be false
     end
 
     it 'returns true for registered address' do
-      described_class.instance_variable_get(:@mutex).synchronize do
-        described_class.instance_variable_get(:@registered_resources) << 'sensor.temp.room1'
-      end
+      described_class.register_observable_resource('sensor.temp.room1', app)
 
       expect(described_class.registered?('sensor.temp.room1')).to be true
     end
@@ -72,13 +129,8 @@ RSpec.describe Takagi::EventBus::CoAPBridge do
     end
 
     it 'returns all registered addresses' do
-      mutex = described_class.instance_variable_get(:@mutex)
-      resources = described_class.instance_variable_get(:@registered_resources)
-
-      mutex.synchronize do
-        resources << 'sensor.temp.room1'
-        resources << 'alert.fire.detected'
-      end
+      described_class.register_observable_resource('sensor.temp.room1', app)
+      described_class.register_observable_resource('alert.fire.detected', app)
 
       expect(described_class.registered_addresses).to match_array([
         'sensor.temp.room1',
@@ -93,13 +145,8 @@ RSpec.describe Takagi::EventBus::CoAPBridge do
     end
 
     it 'returns count of registered resources' do
-      mutex = described_class.instance_variable_get(:@mutex)
-      resources = described_class.instance_variable_get(:@registered_resources)
-
-      mutex.synchronize do
-        resources << 'sensor.temp.room1'
-        resources << 'alert.fire.detected'
-      end
+      described_class.register_observable_resource('sensor.temp.room1', app)
+      described_class.register_observable_resource('alert.fire.detected', app)
 
       expect(described_class.registered_count).to eq(2)
     end
@@ -107,12 +154,7 @@ RSpec.describe Takagi::EventBus::CoAPBridge do
 
   describe '.unregister' do
     it 'removes registered address' do
-      mutex = described_class.instance_variable_get(:@mutex)
-      resources = described_class.instance_variable_get(:@registered_resources)
-
-      mutex.synchronize do
-        resources << 'sensor.temp.room1'
-      end
+      described_class.register_observable_resource('sensor.temp.room1', app)
 
       expect(described_class.registered?('sensor.temp.room1')).to be true
       described_class.unregister('sensor.temp.room1')
@@ -120,12 +162,7 @@ RSpec.describe Takagi::EventBus::CoAPBridge do
     end
 
     it 'returns true if was registered' do
-      mutex = described_class.instance_variable_get(:@mutex)
-      resources = described_class.instance_variable_get(:@registered_resources)
-
-      mutex.synchronize do
-        resources << 'sensor.temp.room1'
-      end
+      described_class.register_observable_resource('sensor.temp.room1', app)
 
       result = described_class.unregister('sensor.temp.room1')
       expect(result).to be true
@@ -139,13 +176,8 @@ RSpec.describe Takagi::EventBus::CoAPBridge do
 
   describe '.clear' do
     it 'removes all registrations' do
-      mutex = described_class.instance_variable_get(:@mutex)
-      resources = described_class.instance_variable_get(:@registered_resources)
-
-      mutex.synchronize do
-        resources << 'sensor.temp.room1'
-        resources << 'alert.fire.detected'
-      end
+      described_class.register_observable_resource('sensor.temp.room1', app)
+      described_class.register_observable_resource('alert.fire.detected', app)
 
       expect(described_class.registered_count).to eq(2)
 
@@ -155,81 +187,72 @@ RSpec.describe Takagi::EventBus::CoAPBridge do
   end
 
   describe 'thread safety' do
-    it 'handles concurrent registrations' do
-      # Mock the EventBus.distributed? check
-      allow(Takagi::EventBus).to receive(:distributed?).and_return(false)
-
+    it 'handles concurrent registrations of distinct addresses' do
       threads = 10.times.map do |i|
-        Thread.new do
-          described_class.instance_variable_get(:@mutex).synchronize do
-            described_class.instance_variable_get(:@registered_resources) << "sensor.temp.room#{i}"
-          end
-        end
+        Thread.new { described_class.register_observable_resource("sensor.temp.room#{i}", app) }
       end
 
-      threads.each(&:join)
+      Timeout.timeout(5) { threads.each(&:join) }
 
       expect(described_class.registered_count).to eq(10)
     end
 
     it 'prevents duplicate registrations' do
-      # Mock the EventBus.distributed? check
-      allow(Takagi::EventBus).to receive(:distributed?).and_return(false)
-
       threads = 10.times.map do
-        Thread.new do
-          described_class.instance_variable_get(:@mutex).synchronize do
-            described_class.instance_variable_get(:@registered_resources) << 'sensor.temp.room1'
-          end
-        end
+        Thread.new { described_class.register_observable_resource('sensor.temp.room1', app) }
       end
 
-      threads.each(&:join)
+      Timeout.timeout(5) { threads.each(&:join) }
 
-      # Set should prevent duplicates
       expect(described_class.registered_count).to eq(1)
     end
 
-    it 'handles concurrent reads and writes' do
-      stop = false
-      errors = []
+    it 'serves concurrent reads while writes are in flight without error' do
+      errors = Queue.new
 
-      # Writer thread
       writer = Thread.new do
-        100.times do |i|
-          begin
-            described_class.instance_variable_get(:@mutex).synchronize do
-              described_class.instance_variable_get(:@registered_resources) << "sensor.#{i}"
-            end
-          rescue => e
-            errors << e
-          end
-          break if stop
-        end
+        50.times { |i| described_class.register_observable_resource("sensor.#{i}", app) }
+      rescue StandardError => e
+        errors << e
       end
 
-      # Reader threads
       readers = 5.times.map do
         Thread.new do
-          100.times do
-            begin
-              described_class.registered_addresses
-              described_class.registered_count
-            rescue => e
-              errors << e
-            end
-            break if stop
+          50.times do
+            described_class.registered_addresses
+            described_class.registered_count
+          rescue StandardError => e
+            errors << e
           end
         end
       end
 
-      sleep 0.2
-      stop = true
-
-      writer.join
-      readers.each(&:join)
+      Timeout.timeout(5) { ([writer] + readers).each(&:join) }
 
       expect(errors).to be_empty
+    end
+  end
+
+  describe '.publish_to_observers' do
+    it 'notifies ObserveRegistry with the built payload' do
+      message = Takagi::EventBus::Message.new('sensor.temp.room1', { value: 25.5 })
+
+      expect(Takagi::ObserveRegistry).to receive(:notify).with(
+        '/events/sensor/temp/room1',
+        hash_including(address: 'sensor.temp.room1', body: { value: 25.5 })
+      )
+
+      described_class.publish_to_observers('sensor.temp.room1', message)
+    end
+
+    it 'logs and swallows a notification failure without touching bus state' do
+      message = Takagi::EventBus::Message.new('sensor.temp.room1', { value: 25.5 })
+      allow(Takagi::ObserveRegistry).to receive(:notify).and_raise(StandardError, 'registry down')
+      expect(Takagi.logger).to receive(:error).with(/Error publishing to observers/)
+
+      expect do
+        described_class.publish_to_observers('sensor.temp.room1', message)
+      end.not_to raise_error
     end
   end
 
@@ -238,6 +261,25 @@ RSpec.describe Takagi::EventBus::CoAPBridge do
       expect do
         described_class.subscribe_remote('sensor.temp.buildingA', 'coap://building-a:5683') { }
       end.to raise_error(NotImplementedError, /not implemented/)
+    end
+  end
+
+  describe 'local bus isolation' do
+    let(:bus) { Takagi::Bus.new }
+
+    after { bus.shutdown }
+
+    it 'delivers a formerly-distributed publish locally and registers no observable' do
+      received = nil
+      allow(described_class).to receive(:register_observable_resource).and_call_original
+
+      bus.consumer('sensor.temp.room1') { |msg| received = msg.body }
+
+      bus.publish('sensor.temp.room1', { value: 25.5 })
+
+      expect(received).to eq({ value: 25.5 })
+      expect(described_class).not_to have_received(:register_observable_resource)
+      expect(described_class.registered_count).to eq(0)
     end
   end
 end

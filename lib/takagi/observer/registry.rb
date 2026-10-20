@@ -16,6 +16,8 @@ module Takagi
     class Registry
       @subscriptions = {}
       @mutex = Mutex.new
+      @cleanup = nil
+      @cleanup_mutex = Mutex.new
 
       class << self
         attr_reader :subscriptions
@@ -94,7 +96,35 @@ module Takagi
           cleaned
         end
 
+        # The registry owns the subscriptions the cleaner expires, so it owns the
+        # cleaner's thread. `start_cleanup` is idempotent: repeated boot calls
+        # construct and start ONE background cleaner, never two threads racing to
+        # expire the same subscriptions.
+        def start_cleanup
+          @cleanup_mutex.synchronize do
+            @cleanup ||= EventBus::ObserverCleanup.new(
+              interval: event_bus_setting(:cleanup_interval, 'EVENTBUS_CLEANUP_INTERVAL', 60),
+              max_age: event_bus_setting(:max_observer_age, 'EVENTBUS_MAX_OBSERVER_AGE', 600)
+            )
+            @cleanup.start
+            @cleanup
+          end
+        end
+
         private
+
+        # Same precedence the bus used when it owned the cleaner: configuration
+        # beats environment beats default. Keeps the cleaner's interval and
+        # max-age configurable exactly as before the ownership moved here.
+        def event_bus_setting(config_key, env_key, default)
+          if defined?(Takagi.config) && Takagi.config.event_bus.respond_to?(config_key)
+            Takagi.config.event_bus.public_send(config_key)
+          elsif ENV[env_key]
+            ENV[env_key].to_i
+          else
+            default
+          end
+        end
 
         def should_notify?(subscription, new_value)
           return true unless subscription[:delta] && subscription[:last_value]

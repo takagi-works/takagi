@@ -1,8 +1,10 @@
 module Takagi
-  class EventBus
+  class Bus
     module AsyncExecutor
       # Thread-based executor (default fallback)
       class ThreadExecutor
+        DEFAULT_BACKLOG_LIMIT: ::Integer
+
         @size: untyped
 
         @queue: untyped
@@ -13,9 +15,14 @@ module Takagi
 
         attr_reader size: untyped
 
-        def initialize: (size: untyped) -> void
+        attr_reader backlog_limit: untyped
 
-        def post: (untyped handler, untyped message) -> untyped
+        def initialize: (size: untyped, ?backlog_limit: untyped) -> void
+
+        # Queue one message for one subscriber.
+        #
+        # @return [Boolean] false when that subscriber's backlog is full and the message was refused
+        def post: (untyped handler, untyped message) -> bool
 
         def register_handler: (untyped _handler) -> nil
 
@@ -25,63 +32,23 @@ module Takagi
 
         def running?: () -> untyped
 
-        def stats: () -> { mode: :threads, size: untyped }
+        def stats: () -> ::Hash[::Symbol, untyped]
 
         private
 
         def start_workers: () -> untyped
-      end
 
-      # Process-based executor for multi-reactor workloads
-      class ProcessExecutor
-        @processes: untyped
+        def worker_loop: () -> untyped
 
-        @threads: untyped
+        # Hand the first message of a burst to a worker; every later one joins the backlog.
+        def promote: (untyped handler) -> untyped
 
-        @mutex: untyped
+        # Run one subscriber's backlog to exhaustion before releasing its in-flight slot.
+        def drain: (untyped handler) -> untyped
 
-        @jobs: untyped
+        def deliver: (untyped handler, untyped message) -> untyped
 
-        @next_index: untyped
-
-        @needs_restart: untyped
-
-        Job: untyped
-
-        def initialize: (processes: untyped, threads: untyped) -> void
-
-        def post: (untyped handler, untyped message) -> untyped
-
-        # Mark for restart so new handlers are visible in workers
-        def register_handler: (untyped _handler) -> untyped
-
-        def unregister_handler: (untyped _handler) -> untyped
-
-        def shutdown: () -> untyped
-
-        def stats: () -> { mode: :processes, size: untyped }
-
-        private
-
-        def ensure_running: () -> (nil | untyped)
-
-        def mark_restart_needed: () -> untyped
-
-        def restart_workers_locked: () -> untyped
-
-        def shutdown_workers: () -> untyped
-
-        def spawn_workers_locked: () -> (nil | untyped)
-
-        def fork_worker: (untyped index) -> untyped
-
-        def run_worker: (untyped reader, untyped index) -> untyped
-
-        def dispatch: (untyped handler, untyped message) -> (nil | untyped)
-
-        def select_job: () -> untyped
-
-        def reopen_worker: (untyped index) -> untyped
+        def log_refusal: (untyped handler) -> untyped
       end
     end
   end

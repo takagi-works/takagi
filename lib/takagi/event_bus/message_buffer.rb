@@ -78,13 +78,11 @@ module Takagi
       end
 
       # Store a message in the buffer
-      # Only stores distributed addresses to conserve memory
       #
       # @param address [String] Event address
       # @param message [Message] Event message
       def store(address, message)
         return unless @enabled
-        return unless AddressPrefix.distributed?(address)
 
         @mutex.synchronize do
           @buffers[address].push(message)

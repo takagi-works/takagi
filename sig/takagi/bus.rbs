@@ -1,0 +1,202 @@
+module Takagi
+  # Instance-owned local event distribution.
+  #
+  # Subscriptions live on the instance, so two buses in one process are isolated; `Bus.default` is
+  # the memoized process-wide instance serving the class-level API.
+  #
+  # `publish` snapshots the matching subscribers under the registry lock and then delivers to that
+  # snapshot OUTSIDE it, synchronously and in registration order. A subscriber registered with
+  # `async: true` is handed to the lazily built executor instead, which keeps THAT subscriber's
+  # messages in publication order and never runs it concurrently with itself.
+  class Bus
+    class Error < StandardError
+    end
+
+    DEFAULT_LOCK: ::Mutex
+
+    # Event message wrapper.
+    class Message
+      attr_reader address: untyped
+
+      attr_reader body: untyped
+
+      attr_reader headers: untyped
+
+      attr_reader reply_address: untyped
+
+      attr_reader timestamp: ::Time
+
+      def initialize: (untyped address, untyped body, ?headers: ::Hash[untyped, untyped], ?reply_address: untyped?, ?freeze_body: bool) -> void
+
+      # Reply to this message (request-reply pattern)
+      def reply: (untyped body, ?headers: ::Hash[untyped, untyped]) -> untyped
+
+      private
+
+      def deep_freeze: (untyped obj) -> untyped
+    end
+
+    # Event handler wrapper. One of these is created per `consumer` call.
+    class Handler
+      ERROR_HOOK: ::Symbol
+
+      attr_reader address: untyped
+
+      attr_reader block: untyped
+
+      attr_reader options: ::Hash[untyped, untyped]
+
+      attr_reader pool_id: ::String
+
+      attr_accessor consumer_id: untyped
+
+      def initialize: (untyped address, ?::Hash[untyped, untyped] options) { (untyped) -> untyped } -> void
+
+      # Run the subscriber. A raised error is logged and re-emitted as the
+      # `:bus_subscriber_error` hook rather than escaping to the publisher.
+      def call: (untyped message) -> untyped
+
+      # Deliver through the executor rather than on the publishing thread.
+      def async?: () -> bool
+
+      private
+
+      def log_error: (untyped error) -> untyped
+
+      # Re-emit a swallowed subscriber error as the `:bus_subscriber_error` hook.
+      def emit_error_hook: (untyped message, untyped error) -> untyped
+    end
+
+    # Helper method to get configuration with fallback to ENV.
+    def self.config_value: (untyped config_key, untyped env_key, untyped default) -> untyped
+
+    # The memoized process-wide instance serving the class-level API.
+    def self.default: () -> Bus
+
+    # Every other class-level name delegates to {Bus.default}.
+    def self.publish: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.consumer: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.observe: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.on: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.notify: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.emit: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.cancel: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.subscribe: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.subscribe_remote: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.unregister: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.unsubscribe: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.send: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.send_sync: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.send_async: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.addresses: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.handler_count: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.stats: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.shutdown: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def self.executor: (*untyped, **untyped) ?{ (?) -> untyped } -> untyped
+
+    def initialize: () -> void
+
+    # Publish a message to all subscribers (pub/sub pattern).
+    #
+    # This bus delivers locally only. `scope: :local` (or omitting it) is accepted; any other scope
+    # is refused loudly, because remote and cross-instance delivery does not exist here.
+    #
+    # @raise [ArgumentError] if a remote or cross-instance scope is requested
+    def publish: (untyped address, ?untyped? body, ?headers: ::Hash[untyped, untyped], ?freeze_body: bool, **untyped options) -> Message
+
+    # Send a message to a single consumer (point-to-point pattern). Uses round-robin when several
+    # consumers are registered.
+    def send: (untyped address, ?untyped? body, ?headers: ::Hash[untyped, untyped]) ?{ (untyped) -> untyped } -> Message
+
+    # Synchronous send with timeout (blocking).
+    #
+    # @raise [Error] if no reply is received within the timeout
+    def send_sync: (untyped address, ?untyped? body, ?headers: ::Hash[untyped, untyped], ?timeout: ::Float) -> untyped
+
+    # Asynchronous send with Future (non-blocking).
+    def send_async: (untyped address, ?untyped? body, ?headers: ::Hash[untyped, untyped]) -> untyped
+
+    # Register a consumer for an address (point-to-point or pub/sub).
+    #
+    # @return [String] Consumer id, for {unregister}
+    def consumer: (untyped address, ?::Hash[untyped, untyped] options) { (untyped) -> untyped } -> ::String
+
+    # Unregister a consumer.
+    def unregister: (untyped consumer_id) -> untyped
+
+    # Subscribe to a remote CoAP observable through the CoAP bridge.
+    def subscribe_remote: (untyped address, untyped node_url) { (untyped) -> untyped } -> untyped
+
+    alias observe consumer
+
+    alias on consumer
+
+    alias notify publish
+
+    alias emit publish
+
+    alias cancel unregister
+
+    alias subscribe subscribe_remote
+
+    alias unsubscribe unregister
+
+    # List all registered addresses.
+    def addresses: () -> ::Array[untyped]
+
+    # Number of handlers registered for an address.
+    def handler_count: (untyped address) -> ::Integer
+
+    # Bus statistics.
+    def stats: () -> ::Hash[::Symbol, untyped]
+
+    attr_reader executor: untyped
+
+    # Shutdown the bus. Deliberately not terminal: the executor reference is dropped rather than
+    # left pointing at the shut-down object, so the next asynchronous delivery rebuilds it.
+    def shutdown: () -> untyped
+
+    private
+
+    # Refuse a `scope:` that asks for delivery this bus cannot perform.
+    def reject_remote_scope!: (untyped scope) -> (nil | untyped)
+
+    def deliver_to_subscribers: (untyped address, untyped message) -> untyped
+
+    def handlers_for: (untyped address) -> ::Array[untyped]
+
+    def wildcard_handlers: (untyped address) -> ::Array[untyped]
+
+    def match_pattern?: (::Array[untyped] parts, ::Array[untyped] pattern_parts) -> bool
+
+    def next_handler_for: (untyped address) -> untyped
+
+    def deliver_async: (untyped handler, untyped message) -> untyped
+
+    def generate_reply_address: () -> ::String
+
+    def ensure_executor: () -> untyped
+
+    def build_executor: () -> untyped
+
+    def log_debug: (untyped message) -> untyped
+  end
+end

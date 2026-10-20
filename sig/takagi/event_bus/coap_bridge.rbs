@@ -1,5 +1,5 @@
 module Takagi
-  class EventBus
+  class Bus
     # CoAP Observe integration - maps events to CoAP resources
     # Thread-safe with Mutex for resource registration
     #
@@ -49,10 +49,10 @@ module Takagi
       # Notifies all observers subscribed via CoAP Observe
       #
       # @param address [String] Event address
-      # @param message [EventBus::Message] Event message
+      # @param message [Bus::Message] Event message
       #
       # @example
-      #   message = EventBus::Message.new('sensor.temp.room1', { value: 25.5 })
+      #   message = Bus::Message.new('sensor.temp.room1', { value: 25.5 })
       #   CoAPBridge.publish_to_observers('sensor.temp.room1', message)
       def self.publish_to_observers: (untyped address, untyped message) -> untyped
 

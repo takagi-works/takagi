@@ -7,12 +7,29 @@ module Takagi
   # Stores runtime configuration loaded from YAML or manual overrides.
   class Config # rubocop:disable Metrics/ClassLength
     Observability = Struct.new(:backends, keyword_init: true)
+    # Only keys a live consumer reads: `async_threads` and `async_backlog_limit`
+    # by `Bus`, `cleanup_interval` and `max_observer_age` by
+    # `Observer::Registry#start_cleanup` (lib/takagi/observer/registry.rb:106-107).
     EventBusConfig = Struct.new(
-      :ractors, :async_threads, :process_pool_size,
-      :state_cache_size, :state_cache_ttl, :cleanup_interval,
-      :max_observer_age, :message_buffering_enabled, :message_buffer_max_messages,
-      :message_buffer_ttl, keyword_init: true
+      :async_threads, :async_backlog_limit, :cleanup_interval, :max_observer_age,
+      keyword_init: true
     )
+
+    # event_bus keys whose feature was removed from the bus. Reading one from
+    # `takagi.yml` must FAIL LOUDLY, never be silently accepted and ignored;
+    # rows that prune further keys extend this map rather than deleting a read
+    # on its own. Each key carries its OWN reason: the removals span several
+    # different features, so one shared sentence would lie about why a given key
+    # is gone (row 12 of .omo/plans/local-bus.md).
+    REMOVED_EVENT_BUS_KEYS = {
+      'ractors' => 'Ractor-based delivery was deleted; the local bus delivers on threads',
+      'process_pool_size' => 'process-based delivery was deleted; the local bus delivers on threads',
+      'state_cache_size' => 'the bus no longer retains per-address state',
+      'state_cache_ttl' => 'the bus no longer retains per-address state',
+      'message_buffering_enabled' => 'bus message buffering was removed',
+      'message_buffer_max_messages' => 'bus message buffering was removed',
+      'message_buffer_ttl' => 'bus message buffering was removed'
+    }.freeze
     RouterConfig = Struct.new(:default_content_format, keyword_init: true)
     MiddlewareConfig = Struct.new(:enabled, :stack, keyword_init: true)
     AllocationConfig = Struct.new(:mode, :total_threads, keyword_init: true)
@@ -123,8 +140,19 @@ module Takagi
       event_bus_data = data['event_bus']
       return unless event_bus_data
 
+      refuse_removed_event_bus_keys(event_bus_data)
       assign_event_bus_core(event_bus_data)
-      assign_message_buffer_settings(event_bus_data)
+    end
+
+    # A removed `event_bus` key has no consumer left to honour it, so accepting
+    # it would let a `takagi.yml` entry silently do nothing. Name each key and
+    # its own reason, then raise.
+    def refuse_removed_event_bus_keys(event_bus_data)
+      removed = REMOVED_EVENT_BUS_KEYS.keys & event_bus_data.keys
+      return if removed.empty?
+
+      named = removed.map { |key| "#{key} (#{REMOVED_EVENT_BUS_KEYS[key]})" }
+      raise ArgumentError, "Removed event_bus configuration key(s): #{named.join('; ')}."
     end
 
     def apply_router(data)
@@ -320,16 +348,13 @@ module Takagi
 
     def set_event_bus_defaults
       @event_bus = EventBusConfig.new(
-        ractors: 10,
         async_threads: 10,
-        process_pool_size: 0,
-        state_cache_size: 1000,
-        state_cache_ttl: 3600,
+        # Same bound the executor falls back to itself,
+        # `AsyncExecutor::ThreadExecutor::DEFAULT_BACKLOG_LIMIT`; pinned by
+        # spec/unit/config_spec.rb so the two cannot drift apart.
+        async_backlog_limit: 1024,
         cleanup_interval: 60,
-        max_observer_age: 600,
-        message_buffering_enabled: false,
-        message_buffer_max_messages: 100,
-        message_buffer_ttl: 300
+        max_observer_age: 600
       )
     end
 
@@ -417,16 +442,9 @@ module Takagi
     end
 
     def assign_event_bus_core(event_bus_data)
-      %w[ractors async_threads process_pool_size state_cache_size state_cache_ttl cleanup_interval max_observer_age].each do |key|
+      %w[async_threads async_backlog_limit cleanup_interval max_observer_age].each do |key|
         assign_event_bus_setting(event_bus_data, key)
       end
-    end
-
-    def assign_message_buffer_settings(event_bus_data)
-      @event_bus.message_buffering_enabled = event_bus_data['message_buffering_enabled'] if event_bus_data.key?('message_buffering_enabled')
-
-      assign_event_bus_setting(event_bus_data, 'message_buffer_max_messages')
-      assign_event_bus_setting(event_bus_data, 'message_buffer_ttl')
     end
 
     def assign_event_bus_setting(event_bus_data, key)

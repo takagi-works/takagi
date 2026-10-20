@@ -8,7 +8,6 @@ RSpec.describe Takagi::Hooks do
     handler = described_class.subscribe(:test_event) { |payload| payloads << payload[:value] }
 
     described_class.emit(:test_event, value: 42)
-    sleep 0.01 # Allow async EventBus delivery
 
     expect(payloads).to eq([42])
 
@@ -26,7 +25,6 @@ RSpec.describe Takagi::Hooks do
     handler = described_class.on(:alias_event) { |payload| payloads << payload[:value] }
 
     described_class.emit(:alias_event, value: 7)
-    sleep 0.01
 
     expect(payloads).to eq([7])
 

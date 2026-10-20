@@ -37,7 +37,6 @@ RSpec.describe Takagi::EventBus::MessageBuffer do
     it 'stores messages for distributed addresses' do
       buffer = described_class.new
 
-      # sensor.* is a distributed prefix
       buffer.store('sensor.temperature.room1', message1)
 
       messages = buffer.replay('sensor.temperature.room1')
@@ -46,14 +45,15 @@ RSpec.describe Takagi::EventBus::MessageBuffer do
       buffer.shutdown
     end
 
-    it 'does not store messages for local-only addresses' do
+    it 'stores messages for every address it is given' do
       buffer = described_class.new
 
-      # system.* is local-only
+      # The buffer no longer filters by address prefix: the bus owns no
+      # distribution policy, so a standalone buffer keeps what it is handed.
       buffer.store('system.startup', message1)
 
       messages = buffer.replay('system.startup')
-      expect(messages).to be_empty
+      expect(messages.size).to eq(1)
       buffer.shutdown
     end
 

@@ -313,4 +313,60 @@ RSpec.describe Takagi::Config do
       expect { write_config "proxy:\n  forward: open\n" }.to raise_error(ArgumentError, /forward/)
     end
   end
+
+  # Row 12 of .omo/plans/local-bus.md: the `event_bus` section advertises only the keys a live
+  # consumer reads. A key whose feature was removed must RAISE, naming itself and its own reason,
+  # rather than be accepted into a struct nobody reads.
+  describe 'event_bus settings (row 12)' do
+    it 'raises for a key this row removed, naming it (PROOF, row 12)' do
+      expect { write_config "event_bus:\n  state_cache_size: 1000\n" }
+        .to raise_error(ArgumentError, /state_cache_size/)
+    end
+
+    it 'raises for every key this row removed (PROOF, row 12)' do
+      %w[state_cache_size state_cache_ttl message_buffering_enabled
+         message_buffer_max_messages message_buffer_ttl].each do |key|
+        expect { write_config "event_bus:\n  #{key}: 1\n" }
+          .to raise_error(ArgumentError, /#{key}/), "expected a refusal for #{key}"
+      end
+    end
+
+    it 'gives each refused key its own reason, not one shared sentence (PROOF, row 12)' do
+      expect { write_config "event_bus:\n  state_cache_size: 1000\n" }
+        .to raise_error(ArgumentError, /state_cache_size \(the bus no longer retains per-address state\)/)
+      expect { write_config "event_bus:\n  message_buffer_ttl: 300\n" }
+        .to raise_error(ArgumentError, /message_buffer_ttl \(bus message buffering was removed\)/)
+    end
+
+    it 'still refuses row 8 keys (GUARD, row 12)' do
+      %w[ractors process_pool_size].each do |key|
+        expect { write_config "event_bus:\n  #{key}: 1\n" }
+          .to raise_error(ArgumentError, /#{key}/), "expected a refusal for #{key}"
+      end
+    end
+
+    it 'loads a surviving key (GUARD, row 12)' do
+      write_config "event_bus:\n  async_threads: 4\n"
+
+      expect(config.event_bus.async_threads).to eq(4)
+    end
+
+    it 'carries async_backlog_limit from YAML, not only the environment (PROOF, row 12)' do
+      write_config "event_bus:\n  async_backlog_limit: 7\n"
+
+      expect(config.event_bus.async_backlog_limit).to eq(7)
+    end
+
+    it 'defaults the backlog bound to the executor bound (GUARD, row 12)' do
+      expect(described_class.new.event_bus.async_backlog_limit)
+        .to eq(Takagi::Bus::AsyncExecutor::ThreadExecutor::DEFAULT_BACKLOG_LIMIT)
+    end
+
+    it 'keeps the cleanup keys the registry reads (GUARD, row 12)' do
+      write_config "event_bus:\n  cleanup_interval: 5\n  max_observer_age: 30\n"
+
+      expect(config.event_bus.cleanup_interval).to eq(5)
+      expect(config.event_bus.max_observer_age).to eq(30)
+    end
+  end
 end

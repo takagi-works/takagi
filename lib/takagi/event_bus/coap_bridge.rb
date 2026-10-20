@@ -40,10 +40,13 @@ module Takagi
           path.sub(%r{^/events/}, '').gsub('/', '.')
         end
 
-        # Auto-register observable CoAP resource (thread-safe)
-        # Creates a CoAP observable endpoint that returns current state
+        # Register an observable CoAP resource (thread-safe)
+        # Creates a CoAP observable endpoint that reports the resource's existence.
+        # No state is retained or served: the local bus keeps none, so the endpoint
+        # returns a constant descriptor and a future state layer supplies values.
         #
-        # Uses AddressPrefix registry to determine if address should be distributed
+        # This is an explicitly-invoked call. Nothing in the local bus - neither
+        # `publish` nor `consumer` - reaches into this bridge.
         #
         # @param address [String] Event address
         # @param app [Class] Application class (must respond to #observable)
@@ -51,10 +54,7 @@ module Takagi
         #
         # @example
         #   CoAPBridge.register_observable_resource('sensor.temp.room1', MyApp)
-        def register_observable_resource(address, app) # rubocop:disable Metrics/MethodLength
-          # Only register distributed addresses (uses AddressPrefix registry)
-          return false unless AddressPrefix.distributed?(address)
-
+        def register_observable_resource(address, app)
           # Thread-safe check-and-register
           @mutex.synchronize do
             # Already registered?
@@ -66,17 +66,11 @@ module Takagi
             path = address_to_path(address)
 
             begin
-              # Create observable CoAP endpoint
-              # This endpoint returns current state when polled
+              # Create observable CoAP endpoint. The bus retains no state, so the
+              # endpoint reports the resource rather than a value; a future state
+              # layer will supply the value.
               app.observable path do |_req|
-                # Return current state from EventBus
-                current_state = EventBus.current_state(address)
-
-                current_state || {
-                  address: address,
-                  status: 'observable',
-                  timestamp: Time.now.to_i
-                }
+                { address: address, status: 'observable', timestamp: Time.now.to_i }
               end
 
               Takagi.logger.info "Observable resource created: #{path} (#{address})"
@@ -118,15 +112,9 @@ module Takagi
             Takagi.logger.warn 'ObserveRegistry not available, cannot publish to observers'
           end
         rescue StandardError => e
+          # The bus keeps no retention/replay layer, so a failed notification is
+          # logged and dropped rather than handed to bus state.
           Takagi.logger.error "Error publishing to observers for #{address}: #{e.message}"
-
-          # Store failed message for retry if message buffering is enabled
-          # This allows recovery when remote nodes reconnect
-          EventBus.message_store&.store_failed(
-            address,
-            message,
-            "coap_observers:#{path}"
-          )
         end
 
         # Subscribe to remote event via CoAP Observe

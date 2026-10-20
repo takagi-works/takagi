@@ -14,6 +14,10 @@ module Takagi
     @logger ||= Takagi::Logger.new(level: ::Logger::INFO)
   end
 
+  def self.bus
+    Bus.default
+  end
+
   loader = Zeitwerk::Loader.for_gem
   # Configure inflector for CoAP (Constrained Application Protocol),
   # CBOR (Concise Binary Object Representation), and EventBus utilities

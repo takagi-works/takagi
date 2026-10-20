@@ -31,7 +31,23 @@ module Takagi
 
     Observability: untyped
 
-    EventBusConfig: untyped
+    # Only keys a live consumer reads: `async_threads` and `async_backlog_limit` by `Bus`,
+    # `cleanup_interval` and `max_observer_age` by `Observer::Registry#start_cleanup`
+    # (lib/takagi/observer/registry.rb:106-107). A row that removed a bus feature dropped its key
+    # from this struct AND registered the key in `REMOVED_EVENT_BUS_KEYS`, so reading one off
+    # `Takagi.config.event_bus` raises `NoMethodError` and writing one in YAML raises
+    # `ArgumentError`.
+    class EventBusConfig
+      attr_accessor async_threads: untyped
+
+      attr_accessor async_backlog_limit: untyped
+
+      attr_accessor cleanup_interval: untyped
+
+      attr_accessor max_observer_age: untyped
+
+      def initialize: (?async_threads: untyped, ?async_backlog_limit: untyped, ?cleanup_interval: untyped, ?max_observer_age: untyped) -> void
+    end
 
     RouterConfig: untyped
 
@@ -130,8 +146,6 @@ module Takagi
     def assign_protocols: (untyped protocols) -> (nil | untyped)
 
     def assign_event_bus_core: (untyped event_bus_data) -> untyped
-
-    def assign_message_buffer_settings: (untyped event_bus_data) -> untyped
 
     def assign_event_bus_setting: (untyped event_bus_data, untyped key) -> (nil | untyped)
 
