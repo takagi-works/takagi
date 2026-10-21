@@ -95,6 +95,20 @@ module Takagi
       mounted.router.find_route(method, relative)
     end
 
+    # The route entry behind {#find_route}, for a caller that needs the route's own declarations
+    # rather than its handler. Mirrors {#find_route}'s prefix match and delegates to the mounted
+    # controller's own router, so both lookups always agree on which route a request serves.
+    #
+    # @param method [String] HTTP/CoAP method
+    # @param path [String] Request path
+    # @return [Takagi::Router::RouteEntry, nil]
+    def find_entry(method, path)
+      mounted = find_mounted_controller(path)
+      return nil unless mounted
+
+      mounted.router.find_entry(method, mounted.relative_path(path))
+    end
+
     # Get all routes from all mounted controllers
     #
     # @return [Array<String>] List of all routes

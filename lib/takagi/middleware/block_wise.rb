@@ -176,7 +176,7 @@ module Takagi
       # @param downstream [#call] the rest of the middleware chain, called as `downstream.call(request)`
       # @return [Takagi::Message::Outbound, Object] a block reply, or the handler's own result
       def call(request, &downstream)
-        settings = block_wise_settings
+        settings = block_wise_settings(request)
         return downstream.call(request) unless settings&.enabled && !request.message_id.nil?
 
         block1 = decode_block_option(request, CoAP::Registries::Option::BLOCK1)
@@ -189,11 +189,35 @@ module Takagi
 
       private
 
-      # Block-wise settings, read per request so a late `load_file` is honoured.
+      # The block-wise settings in force for ONE request: the global `block_wise` configuration with
+      # the request's own route declaration laid over it, so a route can bound its transfer without
+      # any other route inheriting the bound.
       #
+      # Read per request so a late `load_file` is honoured, and the overlaid object is built only
+      # when the route declared something - a route that says nothing pays nothing.
+      #
+      # @param request [Takagi::Message::Inbound, nil]
       # @return [Object, nil] the block_wise config, or nil when unavailable
-      def block_wise_settings
-        @config || (Takagi.config.block_wise if Takagi.config.respond_to?(:block_wise))
+      def block_wise_settings(request = nil)
+        base = @config || (Takagi.config.block_wise if Takagi.config.respond_to?(:block_wise))
+        overlay = route_block_wise(request)
+        return base if overlay.nil? || base.nil?
+
+        base.class.new(**base.to_h, **overlay)
+      end
+
+      # What the request's own route declared in a `blockwise do ... end` block, or nil.
+      #
+      # The stack resolves the route before the chain runs and hangs it on the request, so this
+      # needs no router of its own.
+      #
+      # @param request [Takagi::Message::Inbound, nil]
+      # @return [Hash, nil]
+      def route_block_wise(request)
+        return nil unless request.respond_to?(:route_entry)
+
+        declared = request.route_entry&.metadata&.[](:block_wise)
+        declared.is_a?(Hash) && !declared.empty? ? declared : nil
       end
 
       # A Block1 request whose only block is the last one already carries the whole body.

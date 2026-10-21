@@ -75,6 +75,17 @@ module Takagi
       load_from_config unless @config_loaded
       Takagi::Hooks.emit(:middleware_before_call, request: request)
 
+      # Routing belongs to the stack, so it resolves the route ONCE here and hangs it on the request
+      # for the chain below. A middleware that needs a route's OWN declarations reads it from there
+      # rather than reaching for a router.
+      #
+      # Guarded rather than assumed: a router that cannot answer `find_entry` (or a request that has
+      # no slot for it) simply carries no route, and the request is served exactly as before - a
+      # missing per-route declaration must never cost a request its answer.
+      if request.respond_to?(:route_entry=) && @router.respond_to?(:find_entry)
+        request.route_entry = @router.find_entry(request.method.to_s, request.uri.path)
+      end
+
       # Define the core application logic (routing)
       app = lambda do |req|
         block, params = @router.find_route(req.method.to_s, req.uri.path)

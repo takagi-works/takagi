@@ -6,6 +6,13 @@ module Takagi
     class Inbound < Base
       attr_reader :method, :uri, :response_code
 
+      # The route the serving middleware chain matched this request to, when one resolved it.
+      #
+      # Set by MiddlewareStack before the chain runs. A middleware that must know what the route
+      # declared - BlockWise reads a route's `blockwise do ... end` settings - reads it here, so it
+      # needs no router of its own and cannot go stale against the router actually in use.
+      attr_accessor :route_entry
+
       def initialize(data, transport: :udp)
         super(data, transport: transport)
         @method = coap_code_to_method(@code)

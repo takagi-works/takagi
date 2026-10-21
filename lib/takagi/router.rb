@@ -82,7 +82,7 @@ module Takagi
       attr_reader :request, :params
 
       # Delegate CoRE attribute methods to @core_attributes
-      def_delegators :@core_attributes, :core, :metadata, :attribute
+      def_delegators :@core_attributes, :core, :blockwise, :metadata, :attribute
       def_delegators :@core_attributes, :ct, :sz, :title, :obs, :rt, :interface
 
       # Aliases for common methods
@@ -209,21 +209,24 @@ module Takagi
     # @param path [String] URL path
     # @return [Proc, Hash] The matching handler and extracted parameters
     def find_route(method, path)
-      @routes_mutex.synchronize do
-        @logger.debug "Routes: #{@routes.inspect}"
-        @logger.debug "Looking for route: #{method} #{path}"
-        entry = @routes["#{method} #{path}"]
-        params = {}
+      entry, params = resolve_entry(method, path)
+      return [nil, {}] unless entry
 
-        return wrap_block(entry), params if entry
+      [wrap_block(entry), params]
+    end
 
-        @logger.debug '[Debug] Find dynamic route'
-        entry, params = match_dynamic_route(method, path)
-
-        return wrap_block(entry), params if entry
-
-        [nil, {}]
-      end
+    # The registered route entry for a method and path, or nil.
+    #
+    # The entry is what carries a route's OWN declarations - its CoRE attributes and the
+    # `blockwise` settings a handler declares in a `blockwise do ... end` block - so this is the
+    # lookup the BlockWise middleware uses, since middleware runs before the handler and cannot
+    # otherwise see the route it is serving.
+    #
+    # @param method [String] HTTP method
+    # @param path [String] URL path
+    # @return [RouteEntry, nil]
+    def find_entry(method, path)
+      resolve_entry(method, path).first
     end
 
     def link_format_entries
@@ -257,6 +260,24 @@ module Takagi
     end
 
     private
+
+    # The one route lookup both {#find_route} and {#find_entry} share, so the two cannot disagree
+    # about which route a request serves.
+    #
+    # @param method [String] HTTP method
+    # @param path [String] URL path
+    # @return [Array(RouteEntry, Hash)] the matched entry (or nil) and its parameters
+    def resolve_entry(method, path)
+      @routes_mutex.synchronize do
+        @logger.debug "Looking for route: #{method} #{path}"
+        entry = @routes["#{method} #{path}"]
+        return [entry, {}] if entry
+
+        @logger.debug '[Debug] Find dynamic route'
+        entry, params = match_dynamic_route(method, path)
+        [entry, params || {}]
+      end
+    end
 
     def wrap_block(entry)
       block = entry&.block

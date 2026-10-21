@@ -62,7 +62,7 @@ module Takagi
         attr_reader :request, :params
 
         # Delegate CoRE attribute methods to @core_attributes
-        def_delegators :@core_attributes, :core, :metadata, :attribute
+        def_delegators :@core_attributes, :core, :blockwise, :metadata, :attribute
         def_delegators :@core_attributes, :ct, :sz, :title, :obs, :rt, :interface
 
         def initialize(entry, request, params, receiver)
