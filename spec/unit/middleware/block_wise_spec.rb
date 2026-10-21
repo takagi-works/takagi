@@ -14,6 +14,26 @@ class BlockWiseSpecApp < Takagi::Base
     body = req.payload.to_s
     { size: body.bytesize, digest: Digest::SHA256.hexdigest(body) }
   end
+
+  # Declares its own cap, far below the global one, so a body the sibling route accepts is refused
+  # here alone. The declaration is written FIRST on purpose: the boot-time metadata pass runs this
+  # handler once, and a raise before the block would leave the route with no settings.
+  post '/block-wise/tight' do |req|
+    blockwise do
+      max_bytes 2048
+    end
+
+    { size: req.payload.to_s.bytesize }
+  end
+
+  # Opts out entirely, so this route is served as if block-wise were switched off globally.
+  post '/block-wise/off' do |req|
+    blockwise do
+      enabled false
+    end
+
+    { size: req.payload.to_s.bytesize }
+  end
 end
 
 RSpec.describe Takagi::Middleware::BlockWise do
@@ -520,6 +540,89 @@ RSpec.describe Takagi::Middleware::BlockWise do
       expect(codes.last).to eq(Takagi::CoAP::Registries::Response::REQUEST_ENTITY_TOO_LARGE)
       expect(uint_value(opt(last, Takagi::CoAP::Registries::Option::SIZE1))).to eq(2048)
     ensure
+      @socket.close
+      server.shutdown!
+    end
+
+    # The declaration is the ONLY difference between these two routes, and the global cap is the
+    # roomy 1 MiB default, so one run carries both directions of the discriminator: the same 4 KiB
+    # body is refused on the route that declared 2048 and served on the sibling that declared
+    # nothing. Drop the overlay and BOTH routes serve it.
+    it 'refuses a body on the route that declared a tighter max_bytes and serves its sibling (PROOF)' do
+      server = start_server
+      body = 'z' * 4096
+
+      refused = []
+      too_large = nil
+      Takagi::CoAP::BlockWise.slice(body, szx: 5).each_with_index do |block, index|
+        response = exchange(method: :post, path: '/block-wise/tight', message_id: 0x7000 + index,
+                            payload: block.payload, options: block1(num: block.num, more: block.more?, szx: block.szx))
+        refused << response.code
+        too_large ||= response if response.code == Takagi::CoAP::Registries::Response::REQUEST_ENTITY_TOO_LARGE
+      end
+
+      served = []
+      final = nil
+      Takagi::CoAP::BlockWise.slice(body, szx: 5).each_with_index do |block, index|
+        final = exchange(method: :post, path: '/block-wise/echo', message_id: 0x7100 + index,
+                         payload: block.payload, options: block1(num: block.num, more: block.more?, szx: block.szx))
+        served << final.code
+      end
+
+      # The tight route breaches its own cap while the roomy global one would have accepted the
+      # whole body: 4.13 once, and the blocks after the dropped assembly draw 4.08.
+      expect(refused).to include(Takagi::CoAP::Registries::Response::REQUEST_ENTITY_TOO_LARGE)
+      expect(uint_value(opt(too_large, Takagi::CoAP::Registries::Option::SIZE1))).to eq(2048)
+      expect(served).not_to include(Takagi::CoAP::Registries::Response::REQUEST_ENTITY_TOO_LARGE)
+      expect(final.code).to eq(Takagi::CoAP::Registries::Response::CONTENT)
+      expect(JSON.parse(final.payload)['size']).to eq(4096)
+    ensure
+      @socket.close
+      server.shutdown!
+    end
+
+    # `enabled false` on one route is the same semantics as switching the feature off globally: the
+    # middleware stays out of the way entirely. The observable is which reply the FIRST datagram
+    # draws - the bypassed route answers it as an ordinary request, the other acknowledges a block.
+    it 'serves a route that declared `enabled false` without assembling anything (PROOF)' do
+      server = start_server
+      first_block = Takagi::CoAP::BlockWise.slice('z' * 4096, szx: 5).first
+
+      bypassed = exchange(method: :post, path: '/block-wise/off', message_id: 0x7200,
+                          payload: first_block.payload,
+                          options: block1(num: first_block.num, more: first_block.more?, szx: first_block.szx))
+      assembling = exchange(method: :post, path: '/block-wise/echo', message_id: 0x7300,
+                            payload: first_block.payload,
+                            options: block1(num: first_block.num, more: first_block.more?, szx: first_block.szx))
+
+      expect(bypassed.code).to eq(Takagi::CoAP::Registries::Response::CONTENT)
+      expect(JSON.parse(bypassed.payload)['size']).to eq(first_block.payload.bytesize)
+      expect(assembling.code).to eq(Takagi::CoAP::Registries::Response::CONTINUE)
+    ensure
+      @socket.close
+      server.shutdown!
+    end
+
+    # Declaring the block IS the opt-in, so a route can turn block-wise on against a globally
+    # disabled feature. `/block-wise/tight` declares a block; `/block-wise/echo` declares nothing and
+    # stays governed by the global switch. Both directions in one run, under a global `false`.
+    it 'serves a route that declared the block while the feature is off globally (PROOF)' do
+      previous_enabled = Takagi.config.block_wise.enabled
+      Takagi.config.block_wise.enabled = false
+      server = start_server
+      first_block = Takagi::CoAP::BlockWise.slice('z' * 4096, szx: 5).first
+
+      opted_in = exchange(method: :post, path: '/block-wise/tight', message_id: 0x7400,
+                          payload: first_block.payload,
+                          options: block1(num: first_block.num, more: first_block.more?, szx: first_block.szx))
+      ordinary = exchange(method: :post, path: '/block-wise/echo', message_id: 0x7500,
+                          payload: first_block.payload,
+                          options: block1(num: first_block.num, more: first_block.more?, szx: first_block.szx))
+
+      expect(opted_in.code).to eq(Takagi::CoAP::Registries::Response::CONTINUE)
+      expect(ordinary.code).to eq(Takagi::CoAP::Registries::Response::CONTENT)
+    ensure
+      Takagi.config.block_wise.enabled = previous_enabled
       @socket.close
       server.shutdown!
     end

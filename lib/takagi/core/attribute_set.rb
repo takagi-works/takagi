@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative '../block_wise/attribute_set'
+
 module Takagi
   module Core
     # Encapsulates CoRE Link Format attribute handling for a single route.
@@ -23,12 +25,27 @@ module Takagi
       def initialize(metadata)
         @metadata = metadata
         @overrides = {}
+        @block_wise = BlockWise::AttributeSet.new
       end
 
       # Evaluates a block that configures any mix of CoRE attributes.
       # Accepts the same DSL as the runtime helpers exposed in RouteContext.
       def core(&block)
         instance_exec(&block) if block
+      end
+
+      # Declares the block-wise settings for THIS route, in the same readable style as {#core}.
+      #
+      # The values are staged on a {BlockWise::AttributeSet} and persisted into the route metadata
+      # under
+      # :block_wise by {#apply!}. The BlockWise middleware overlays them onto the global
+      # `block_wise` configuration for this route alone, so a route can bound its own transfer
+      # without another route inheriting the bound.
+      def blockwise(&block)
+        return unless block
+
+        @block_wise.declared!
+        @block_wise.instance_exec(&block)
       end
 
       def ct(value)
@@ -66,27 +83,35 @@ module Takagi
       # Invoked automatically after request handling, but also exposed so
       # callers (e.g. Takagi::Router#configure_core) can persist updates.
       def apply!
-        return if @overrides.empty?
+        return if @overrides.empty? && @block_wise.empty?
 
-        @overrides.each do |key, value|
-          if value.equal?(REMOVE)
-            metadata.delete(key)
-            next
-          end
-
-          coerced = if value.is_a?(Array)
-                      normalized = value.map(&:to_s)
-                      normalized.length == 1 ? normalized.first : normalized
-                    else
-                      value
-                    end
-          metadata[key] = coerced
-        end
-
-        @overrides.clear
+        persist_overrides!
+        persist_block_wise!
       end
 
       private
+
+      def persist_overrides!
+        @overrides.each do |key, value|
+          value.equal?(REMOVE) ? metadata.delete(key) : (metadata[key] = coerced_override(value))
+        end
+        @overrides.clear
+      end
+
+      # Merged rather than replaced, so a `metadata: { block_wise: {...} }` declaration and a
+      # `blockwise do ... end` block on the same route combine, with the block winning.
+      def persist_block_wise!
+        return if @block_wise.empty?
+
+        metadata[:block_wise] = (metadata[:block_wise] || {}).merge(@block_wise.to_h)
+      end
+
+      def coerced_override(value)
+        return value unless value.is_a?(Array)
+
+        normalized = value.map(&:to_s)
+        normalized.length == 1 ? normalized.first : normalized
+      end
 
       def assign_list(key, values)
         flattened = values.flatten.compact

@@ -1,0 +1,28 @@
+module Takagi
+  module BlockWise
+    class AttributeSet
+      SZX_RANGE: ::Range[::Integer]
+
+      def initialize: () -> void
+
+      def declared!: () -> bool
+
+      def enabled: (?untyped value) -> bool
+
+      def szx: (untyped value) -> untyped
+
+      def max_bytes: (untyped value) -> untyped
+      alias max_assembled_bytes max_bytes
+
+      def ttl: (untyped value) -> untyped
+      alias assembly_ttl ttl
+
+      def max_assemblies: (untyped value) -> untyped
+      alias max_concurrent_assemblies max_assemblies
+
+      def empty?: () -> bool
+
+      def to_h: () -> ::Hash[::Symbol, untyped]
+    end
+  end
+end

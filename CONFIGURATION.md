@@ -26,12 +26,10 @@ port: 5683
 threads: 4
 
 event_bus:
-  ractors: 10
-  state_cache_size: 1000
-  state_cache_ttl: 3600
-  message_buffering_enabled: true
-  message_buffer_max_messages: 100
-  message_buffer_ttl: 300
+  async_threads: 10
+  async_backlog_limit: 1024
+  cleanup_interval: 60
+  max_observer_age: 600
 ```
 
 Load the configuration:
@@ -49,12 +47,13 @@ Takagi.config.load_file('takagi.yml')
 ### 2. Using Environment Variables
 
 ```bash
-export EVENTBUS_RACTORS=10
-export EVENTBUS_STATE_SIZE=1000
-export EVENTBUS_STATE_TTL=3600
-
 ruby your_app.rb
 ```
+
+The `event_bus:` keys are read from YAML or the programmatic API only. The old `EVENTBUS_*`
+names are not consulted while a value is present in the config, so setting one changes nothing.
+The environment is still the source for a few tooling settings, `TAKAGI_METRICS_DIR` among them
+(see [Environment Variables Reference](#environment-variables-reference)).
 
 ### 3. Programmatic Configuration
 
@@ -63,11 +62,8 @@ require 'takagi'
 
 # Configure via API
 Takagi.config.port = 5683
-Takagi.config.event_bus.ractors = 10
-Takagi.config.event_bus.message_buffering_enabled = true
-
-# Or configure EventBus directly
-Takagi::EventBus.enable_message_buffering(max_messages: 100, ttl: 300)
+Takagi.config.event_bus.async_threads = 10
+Takagi.config.event_bus.async_backlog_limit = 1024
 ```
 
 ---
@@ -103,7 +99,7 @@ end
 # Access built-in settings
 Takagi.config.port                    # => 5683
 Takagi.config.threads                 # => 4
-Takagi.config.event_bus.ractors       # => 10
+Takagi.config.event_bus.async_threads # => 10
 
 # Access custom settings
 Takagi.config[:app_name]              # => "My App"
@@ -114,23 +110,34 @@ Takagi.config.app_name                # => "My App" (method_missing)
 
 ## EventBus Configuration
 
-### Core Settings
+The EventBus is a local, in-process delivery mechanism. It holds no event state and never leaves
+the process, so there is nothing here for distribution, clustering or buffering to configure. Only
+four keys have a live consumer in `lib/`.
 
-| Setting | YAML Key | ENV Variable | Default | Description |
-|---------|----------|--------------|---------|-------------|
-| **Worker Pool** | `event_bus.ractors` | `EVENTBUS_RACTORS` | 10 | Number of worker threads for async delivery |
-| **State Cache Size** | `event_bus.state_cache_size` | `EVENTBUS_STATE_SIZE` | 1000 | Max addresses in LRUCache |
-| **State Cache TTL** | `event_bus.state_cache_ttl` | `EVENTBUS_STATE_TTL` | 3600 | Seconds (1 hour) |
-| **Cleanup Interval** | `event_bus.cleanup_interval` | `EVENTBUS_CLEANUP_INTERVAL` | 60 | Seconds between observer cleanup |
-| **Max Observer Age** | `event_bus.max_observer_age` | `EVENTBUS_MAX_OBSERVER_AGE` | 600 | Seconds (10 minutes) |
-
-### Message Buffering Settings
+### Settings
 
 | Setting | YAML Key | Default | Description |
 |---------|----------|---------|-------------|
-| **Enable Buffering** | `event_bus.message_buffering_enabled` | false | Enable message buffering |
-| **Max Messages** | `event_bus.message_buffer_max_messages` | 100 | Messages per address |
-| **Buffer TTL** | `event_bus.message_buffer_ttl` | 300 | Seconds (5 minutes) |
+| **Async threads** | `event_bus.async_threads` | 10 | Threads that run subscribers registered with `async: true`; each subscriber still sees its own messages in order |
+| **Async backlog limit** | `event_bus.async_backlog_limit` | 1024 | Per-subscriber backlog bound; a post that would exceed it is refused and logged |
+| **Cleanup interval** | `event_bus.cleanup_interval` | 60 | Seconds between observer cleanup passes (read by `Observer::Registry`) |
+| **Max observer age** | `event_bus.max_observer_age` | 600 | Seconds before an idle observer is expired (read by `Observer::Registry`) |
+
+These keys are read from YAML or the programmatic API. The matching `EVENTBUS_*` environment names
+are not consulted while a value is present in the config, so they have no effect today.
+
+### Removed keys are refused, not ignored
+
+Keys whose feature was taken out of the bus now fail the load with an `ArgumentError` naming the key
+and the reason. Writing one is an error, not a silent no-op:
+
+- `ractors` and `process_pool_size` (async delivery runs on threads)
+- `state_cache_size` and `state_cache_ttl` (the bus retains no per-address state)
+- `message_buffering_enabled`, `message_buffer_max_messages` and `message_buffer_ttl` (bus message
+  buffering is gone)
+
+`Takagi::Config::EventBusConfig` has exactly the four members above, so a removed key also raises
+`NoMethodError` if you read it off `Takagi.config.event_bus`.
 
 ### Configuration Examples
 
@@ -138,66 +145,41 @@ Takagi.config.app_name                # => "My App" (method_missing)
 ```yaml
 event_bus:
   # Use all defaults
-  # - 10 workers
-  # - 1000 address cache
-  # - No message buffering
+  # - 10 async threads
+  # - 1024 backlog per subscriber
 ```
 
-#### Moderate (WiFi Network)
+#### Tuned for many async subscribers
 ```yaml
 event_bus:
-  ractors: 10
-  state_cache_size: 1000
-  state_cache_ttl: 3600
-
-  # Enable buffering for WiFi reliability
-  message_buffering_enabled: true
-  message_buffer_max_messages: 50
-  message_buffer_ttl: 60  # 1 minute
-```
-
-#### Heavy (Mesh Network)
-```yaml
-event_bus:
-  ractors: 20  # More workers for high load
-  state_cache_size: 5000
-  state_cache_ttl: 7200  # 2 hours
-
-  # Large buffer for poor connectivity
-  message_buffering_enabled: true
-  message_buffer_max_messages: 200
-  message_buffer_ttl: 600  # 10 minutes
+  async_threads: 20
+  async_backlog_limit: 2048
 ```
 
 #### Memory Constrained (IoT Device)
 ```yaml
 event_bus:
-  ractors: 2  # Minimal workers
-  state_cache_size: 100
-  state_cache_ttl: 600  # 10 minutes
+  async_threads: 2
+  async_backlog_limit: 128
+```
 
-  # No buffering on constrained device
-  message_buffering_enabled: false
+#### Observer cleanup on a slow link
+```yaml
+event_bus:
+  cleanup_interval: 120
+  max_observer_age: 1800  # 30 minutes
 ```
 
 ### Programmatic EventBus Configuration
 
 ```ruby
-# Enable message buffering at runtime
-Takagi::EventBus.enable_message_buffering(
-  max_messages: 100,
-  ttl: 300
-)
+# Tune async delivery
+Takagi.config.event_bus.async_threads = 20
+Takagi.config.event_bus.async_backlog_limit = 2048
 
-# Disable buffering
-Takagi::EventBus.disable_message_buffering
-
-# Use custom store (plugin)
-Takagi::EventBus.configure_message_store(RedisMessageStore.new)
-
-# Query configuration status
-stats = Takagi::EventBus.stats
-puts stats[:message_buffer]  # => { enabled: true, total_messages: 47, ... }
+# Query the bus
+stats = Takagi::Bus.default.stats
+puts stats[:consumers]
 ```
 
 ---
@@ -209,6 +191,7 @@ puts stats[:message_buffer]  # => { enabled: true, total_messages: 47, ... }
 | Setting | YAML Key | Default | Description |
 |---------|----------|---------|-------------|
 | **Port** | `port` | 5683 | CoAP server port. `0` asks the kernel for a free port; each transport reports the port its own socket bound, in the boot log, in its own `:server_starting` payload and in the service's `:service_starting` payload |
+| **Bind Address** | `bind_address` | `0.0.0.0` | The local address every transport of the service binds. `127.0.0.1` serves loopback only; an IPv6 literal such as `::1` (or `::` for all interfaces) serves over IPv6, and the socket's address family follows the address |
 | **Server Name** | `server_name` | nil | Server identification |
 | **Processes** | `processes` | 1 | OS worker processes for the WHOLE service: the ONE count the cluster forks and every transport is served by. A per-protocol `processes` is only a compatibility alias that must agree (see [One worker count per service](#one-worker-count-per-service-processes)) |
 | **Threads** | `threads` | 1 | Threads per serving process. A server-wide default for UDP's readers; a TCP handler pool opens only on the protocol's own key (see [Threads](#threads-threads)) |
@@ -218,6 +201,7 @@ puts stats[:message_buffer]  # => { enabled: true, total_messages: 47, ... }
 
 ```yaml
 port: 5683
+bind_address: "0.0.0.0"
 server_name: "Building A Sensor Hub"
 protocols:
   - udp
@@ -556,6 +540,60 @@ Takagi.config.block_wise.enabled = false
 
 When it's off, responses that exceed one datagram are no longer sliced and large request bodies are no longer reassembled. Messages that already fit in a single block behave the same either way.
 
+### Per-route settings
+
+The settings above are global. A route can bound its own transfer by declaring `blockwise` beside
+`core`, in the same style:
+
+```ruby
+get '/metrics' do
+  core do
+    title 'Environment Metrics'
+    rt %w[sensor.metrics sensor.temp]
+    interface 'core.s'
+    sz 256                     # CoRE size estimate, for discovery
+  end
+
+  blockwise do
+    max_bytes 8192             # a body this route will reassemble
+    szx 4                      # blocks this route negotiates
+  end
+
+  { temp: 21.4, humidity: 0.48 }
+end
+```
+
+| Setting | Global key | Meaning |
+|---------|------------|---------|
+| `enabled` | `block_wise.enabled` | `false` serves this route exactly as if block-wise were off globally |
+| `szx` | `block_wise.szx` | Block size exponent, `0` to `6` |
+| `max_bytes` | `block_wise.max_assembled_bytes` | Cap on one reassembled request body |
+| `ttl` | `block_wise.assembly_ttl` | Seconds an idle request assembly survives |
+| `max_assemblies` | `block_wise.max_concurrent_assemblies` | Cap on in-flight request assemblies |
+
+Each global key also works as its own setter name (`max_assembled_bytes`, `assembly_ttl`,
+`max_concurrent_assemblies`), so either spelling reads. One setting per line.
+
+What a route declares applies **to that route alone**: a route that says `max_bytes 8192` is bounded
+at 8 KiB while its siblings keep the global cap, and a route that declares nothing is untouched.
+
+Declaring the block is also the **opt-in**: a route that declares `blockwise` has block-wise turned
+on even when it is off globally, so one route can serve large payloads on a service that has the
+feature switched off. Write `enabled false` inside the block to turn it back off for that route -
+the declaration supplies the default, it does not overrule you.
+
+`sz` and `blockwise` are deliberately separate keys. `sz` is RFC 6690's *maximum size estimate* - it
+tells a client what to expect from `/.well-known/core` - while `blockwise` is behaviour. Keeping them
+apart means the discovery document never changes just because a route's limits did.
+
+Two things worth knowing:
+
+- **Declare it before the rest of the handler.** The settings are captured once, at boot, the same
+  way `core` attributes are. A handler that raises before it reaches the `blockwise` block leaves
+  the route with no settings at all.
+- **A route can only bound what the middleware decides.** Block-wise runs before your handler, so
+  `blockwise` can refuse or cap a transfer, but it cannot hand the handler the blocks themselves.
+
 ### Known Limitations
 
 Two limits come from the current implementation. Neither has a built-in fix yet, so plan around them.
@@ -577,11 +615,13 @@ A proxy sits in front of one or more backends and forwards each request to the o
 
 | Setting | YAML Key | Default | Description |
 |---------|----------|---------|-------------|
-| **Enabled** | `proxy.enabled` | false | Turn the proxy on or off |
+| **Enabled** | `proxy.enabled` | false | Whether the proxy may be built from this configuration: `Takagi::Proxy::RouteTable.from_config` raises unless it is `true` |
 | **Routes** | `proxy.routes` | [] | Prefix-to-backend route list |
 | **Names** | `proxy.names` | [] | Every name, alias and numeric address the proxy answers to |
 | **Discovery** | `proxy.discovery` | `:local` | `:aggregate` merges backend `/.well-known/core`, `:local` answers with proxy routes only |
 | **Forward** | `proxy.forward` | `:deny` | `:deny` refuses every forward-proxy request; `:configured` serves only when the authority matches a configured route |
+
+**`enabled` gates the build, not a running proxy.** The switch is read where the proxy is built from configuration: `Takagi::Proxy::RouteTable.from_config(Takagi.config)` raises `ArgumentError` while `proxy.enabled` is `false` (the default), so a section that is switched off cannot be built into a serving proxy by accident. Building a table directly (`Takagi::Proxy::RouteTable.new`) does not consult the switch.
 
 ### Route table
 
@@ -617,6 +657,7 @@ The default outbound transport is the same as the inbound one: a UDP client gets
 
 ```yaml
 proxy:
+  enabled: true
   routes:
     - prefix: /sensors
       host: 192.168.1.10
@@ -649,9 +690,9 @@ The proxy answers with the standard CoAP proxy codes:
 The proxy is a stateless forwarder. The following are explicitly not supported:
 
 1. **No cache.** The proxy does not cache responses. Every request is forwarded to the backend.
-2. **Observe is not relayed.** A subscription is not carried across the proxy. The proxy forwards an Observe request as a plain GET, returns one response to the client, and cancels the observation it opened at the backend.
+2. **Observe is not relayed.** A subscription is not carried across the proxy. The proxy drops the Observe option from the forwarded request, so it never opens an observation at the backend in the first place. The client gets exactly one response, with no Observe option.
 3. **Block-wise passes through without reassembly.** Block1 and Block2 options are forwarded untouched. The proxy never reassembles a payload and never re-blocks.
-4. **Reliability and assembly are per hop.** The proxy parses and re-originates messages for each leg: a new Message ID and a new Token on every outbound hop. Message identity is never reused across hops.
+4. **Reliability and assembly are per hop.** The proxy parses and re-originates messages for each leg: a new Token on every outbound hop, and a new Message ID on every UDP hop. CoAP over TCP carries no Message ID, so a TCP hop has none. Message identity is never reused across hops.
 5. **No HTTP-CoAP translation and no DTLS.** The proxy is CoAP-to-CoAP only. HTTP-CoAP cross-proxying and coaps are not supported.
 
 ### Example: proxy plus two backends
@@ -677,11 +718,23 @@ proxy:
   forward: configured
 ```
 
-Load it:
+`proxy.yml` only configures: nothing listens until a proxy is built from it and run. `RouteTable.from_config` builds the route table from the loaded section, `Takagi::Proxy.new` binds one listener per protocol, and `run!` serves until the process is stopped. Save this next to `proxy.yml` and run it:
 
 ```ruby
+require 'takagi'
+
 Takagi.config.load_file('proxy.yml')
+
+table = Takagi::Proxy::RouteTable.from_config(Takagi.config)
+proxy = Takagi::Proxy.new(route_table: table,
+                          port: Takagi.config.port,
+                          protocols: Takagi.config.protocols)
+
+Takagi.logger.info "proxy listening: UDP #{proxy.port(:udp)}, TCP #{proxy.port(:tcp)}"
+proxy.run!
 ```
+
+`#port(protocol)` and `#ports` report the ports the listeners' own sockets bound, so a YAML `port: 0` gives each listener its own ephemeral port and the reader still names the real one. A path no route claims (for example `/ping`) is answered by the proxy's own routes; a path under a configured prefix goes to that route's backend.
 
 ---
 
@@ -689,20 +742,10 @@ Takagi.config.load_file('proxy.yml')
 
 ### EventBus
 
-```bash
-# Worker pool
-export EVENTBUS_RACTORS=10
-
-# State cache (LRUCache)
-export EVENTBUS_STATE_SIZE=1000
-export EVENTBUS_STATE_TTL=3600
-
-# Observer cleanup
-export EVENTBUS_CLEANUP_INTERVAL=60
-export EVENTBUS_MAX_OBSERVER_AGE=600
-```
-
-**Note:** Message buffering can only be enabled via YAML or programmatic API, not ENV variables.
+The bus has no environment variables of its own. Its four keys (`async_threads`,
+`async_backlog_limit`, `cleanup_interval`, `max_observer_age`) come from YAML or the programmatic
+API. The retired `EVENTBUS_RACTORS`, `EVENTBUS_STATE_SIZE`, `EVENTBUS_STATE_TTL`,
+`EVENTBUS_CLEANUP_INTERVAL` and `EVENTBUS_MAX_OBSERVER_AGE` names are not consulted.
 
 ---
 
@@ -716,9 +759,8 @@ port: 5683
 threads: 2
 
 event_bus:
-  ractors: 5
-  state_cache_size: 100
-  message_buffering_enabled: false  # Fast, no buffering needed
+  async_threads: 2
+  async_backlog_limit: 128
 
 custom:
   environment: development
@@ -738,14 +780,8 @@ threads: 8
 processes: 2
 
 event_bus:
-  ractors: 20
-  state_cache_size: 10000
-  state_cache_ttl: 7200
-
-  # Critical: Enable buffering for reliability
-  message_buffering_enabled: true
-  message_buffer_max_messages: 500
-  message_buffer_ttl: 900  # 15 minutes
+  async_threads: 20
+  async_backlog_limit: 4096
 
 observability:
   backends:
@@ -765,9 +801,8 @@ Takagi.config.load_file('production.yml')
 
 ```ruby
 # test_helper.rb
-Takagi.config.event_bus.ractors = 2
-Takagi.config.event_bus.state_cache_size = 10
-Takagi.config.event_bus.message_buffering_enabled = false
+Takagi.config.event_bus.async_threads = 2
+Takagi.config.event_bus.async_backlog_limit = 64
 ```
 
 ### Example 4: Environment-Specific Configuration
@@ -783,12 +818,9 @@ else
   puts "Warning: Config file #{config_file} not found, using defaults"
 end
 
-# Enable message buffering for production only
+# Raise the async thread count for production only
 if env == 'production'
-  Takagi::EventBus.enable_message_buffering(
-    max_messages: 500,
-    ttl: 900
-  )
+  Takagi.config.event_bus.async_threads = 20
 end
 ```
 
@@ -796,10 +828,6 @@ end
 
 ```dockerfile
 # Dockerfile
-ENV EVENTBUS_RACTORS=20
-ENV EVENTBUS_STATE_SIZE=10000
-ENV EVENTBUS_STATE_TTL=7200
-
 COPY config/production.yml /app/takagi.yml
 ```
 
@@ -809,14 +837,8 @@ port: 5683
 threads: 8
 
 event_bus:
-  # ENV variables will override these if set
-  ractors: 10
-  state_cache_size: 5000
-
-  # Must be in YAML (not supported via ENV)
-  message_buffering_enabled: true
-  message_buffer_max_messages: 500
-  message_buffer_ttl: 900
+  async_threads: 20
+  async_backlog_limit: 4096
 ```
 
 ---
@@ -828,9 +850,8 @@ event_bus:
 ✅ **Good:**
 ```yaml
 event_bus:
-  ractors: 10
-  message_buffering_enabled: true
-  message_buffer_max_messages: 100
+  async_threads: 10
+  async_backlog_limit: 1024
 ```
 
 ❌ **Avoid:** Long ENV variable lists
@@ -868,11 +889,9 @@ Takagi.config[:api_key] = ENV['API_KEY']
 # Validate after loading
 config = Takagi.config.event_bus
 
-if config.message_buffering_enabled
-  if config.message_buffer_max_messages < 10
-    warn "Warning: Buffer size too small, increasing to 50"
-    config.message_buffer_max_messages = 50
-  end
+if config.async_threads.to_i < 2
+  warn "Warning: async_threads too small, raising to 2"
+  config.async_threads = 2
 end
 ```
 
@@ -900,40 +919,39 @@ custom:
 begin
   Takagi.config.load_file('takagi.yml')
   puts "Config loaded successfully"
-  puts "EventBus ractors: #{Takagi.config.event_bus.ractors}"
+  puts "EventBus async threads: #{Takagi.config.event_bus.async_threads}"
 rescue StandardError => e
   puts "Config load error: #{e.message}"
   puts "Using defaults"
 end
 ```
 
-### ENV Variables Not Working
+### A Removed event_bus Key Fails the Load
 
 ```ruby
-# Verify ENV priority
-puts "ENV: #{ENV['EVENTBUS_RACTORS']}"
-puts "Config: #{Takagi.config.event_bus.ractors}"
-puts "Actual: #{Takagi::EventBus.instance_variable_get(:@ractor_pool).size}"
+# A key whose feature was removed raises on load, naming the key
+begin
+  Takagi.config.load_file('takagi.yml')
+rescue ArgumentError => e
+  puts "Config rejected: #{e.message}"
+end
 ```
 
-### Message Buffering Not Enabled
+### Where the Bus Settings Live
 
 ```ruby
-# Check configuration
+# The bus reads four keys, all under event_bus:
 config = Takagi.config.event_bus
-puts "Buffering enabled: #{config.message_buffering_enabled}"
-puts "Message store: #{Takagi::EventBus.message_store.inspect}"
-
-# Enable manually if needed
-if Takagi::EventBus.message_store.nil?
-  Takagi::EventBus.enable_message_buffering
-end
+puts "async_threads: #{config.async_threads}"
+puts "async_backlog_limit: #{config.async_backlog_limit}"
+puts "cleanup_interval: #{config.cleanup_interval}"
+puts "max_observer_age: #{config.max_observer_age}"
 ```
 
 ---
 
 ## See Also
 
-- [EventBus Documentation](examples/eventbus_example.rb)
+- [Hooks and Events](docs/HOOKS.md)
 - [Example Configuration](examples/takagi.yml)
-- [Message Buffering Guide](lib/takagi/event_bus/message_buffer.rb)
+- [EventBus Clustering (planned work)](docs/EVENTBUS_CLUSTERING.md)
