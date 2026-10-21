@@ -73,6 +73,11 @@ RSpec.describe 'the server bind address' do
     listener&.close
   end
 
+  # The CI regression this pins: taking the family from a RESOLUTION made `localhost` decide it, and
+  # that answer is not stable across hosts. On a runner that prefers ::1 the socket became AF_INET6
+  # while the observe specs' listener is IPv4-bound, so `send` accepted the datagram and it was never
+  # delivered - two observe specs timed out. `ip6-localhost` is the deterministic stand-in: it has no
+  # colon, yet it resolves to ::1 on this host, so a resolution-based family answers AF_INET6 for it.
   describe Takagi::Network::UdpSocket do
     it 'takes the family from the address, bracketed or not' do
       expect(described_class.family_for('127.0.0.1')).to eq(Socket::AF_INET)
@@ -82,8 +87,21 @@ RSpec.describe 'the server bind address' do
       expect(described_class.family_for('::')).to eq(Socket::AF_INET6)
     end
 
-    it 'falls back to AF_INET for a value it cannot resolve' do
+    it 'never lets a name decide the family, not even one that resolves to IPv6' do
+      expect(described_class.family_for('localhost')).to eq(Socket::AF_INET)
+      expect(described_class.family_for('ip6-localhost')).to eq(Socket::AF_INET)
       expect(described_class.family_for('')).to eq(Socket::AF_INET)
     end
+  end
+
+  it 'reaches an IPv4 listener addressed by name (PROOF)' do
+    listener = UDPSocket.new(Socket::AF_INET)
+    listener.bind('127.0.0.1', 0)
+    socket = Takagi::Network::UdpSocket.for('localhost')
+    socket.send('probe', 0, 'localhost', listener.addr[1])
+    expect(IO.select([listener], nil, nil, 2)).not_to be_nil
+  ensure
+    socket&.close
+    listener&.close
   end
 end
