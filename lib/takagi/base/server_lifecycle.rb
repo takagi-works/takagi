@@ -149,6 +149,9 @@ module Takagi
       # @return [Server] Server instance
       def instantiate_server(protocol, port, threads:, processes:, max_connections: nil, router: nil)
         options = { port: port }
+        # The address every transport of this service binds. Read from the global config the same
+        # way `threads` and `max_connections` below are, so one key governs the whole service.
+        options[:bind_address] = Takagi.config.bind_address
         # A server's `threads` is its own pool size. UDP's readers always take the
         # resolved value, the global default included, because that is how they have
         # always been configured. A TCP handler pool is opt-in on the protocol's OWN key:

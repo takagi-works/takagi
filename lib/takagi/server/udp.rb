@@ -4,6 +4,7 @@ require 'socket'
 require 'timeout'
 require_relative 'cluster'
 require_relative 'udp_worker'
+require_relative '../network/udp_socket'
 
 module Takagi
   module Server
@@ -66,9 +67,11 @@ module Takagi
         @watcher.start
       end
 
-      def initialize(port: 5683, worker_processes: 2, worker_threads: 2,
-                     middleware_stack: nil, router: nil, logger: nil, watcher: nil)
+      def initialize(port: 5683, worker_processes: 2, worker_threads: 2, # rubocop:disable Metrics/ParameterLists -- same transport-config list tcp.rb carries; refactor together
+                     middleware_stack: nil, router: nil, logger: nil, watcher: nil,
+                     bind_address: '0.0.0.0')
         @port = port
+        @bind_address = bind_address
         @worker_processes = worker_processes
         @worker_threads = worker_threads
         @middleware_stack = middleware_stack || Takagi::MiddlewareStack.instance
@@ -78,8 +81,10 @@ module Takagi
 
         Initializer.run!
 
-        @socket = UDPSocket.new
-        @socket.bind('0.0.0.0', @port)
+        # The socket's family follows the address: `UDPSocket.new` alone is AF_INET, which cannot
+        # bind an IPv6 address at all (see Takagi::Network::UdpSocket).
+        @socket = Takagi::Network::UdpSocket.for(@bind_address)
+        @socket.bind(@bind_address, @port)
         # port: 0 asks the kernel for a free port, so the port that was ACTUALLY bound is the only
         # truth downstream: the :server_starting/:server_stopped payloads and the worker's own log
         # line all report this value, exactly as tcp.rb does.
@@ -195,6 +200,7 @@ module Takagi
       def worker_configuration
         {
           port: @port,
+          bind_address: @bind_address,
           socket: @socket,
           middleware_stack: @middleware_stack,
           router: @router,

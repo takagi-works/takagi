@@ -57,6 +57,20 @@ module Takagi
     # @return [Boolean] true when the peer answered the probe
     def ping: () -> bool
 
+    # The `Forwardable` delegator's own surface (`client.rb:35-38`): these two are the delegated
+    # methods `ClientBase`'s signature does not already declare (`raw_exchange` is `protected` there,
+    # `observe` is undeclared). The rest of the delegated methods are inherited from `ClientBase`.
+    def raw_exchange: (
+      Symbol method,
+      String path,
+      ?(String | Hash[untyped, untyped])? payload,
+      ?options: Hash[Integer, untyped],
+      ?type: Integer?,
+      ?token: String?
+    ) -> String?
+
+    def observe: (String path, ?options: Hash[Integer, untyped]) ?{ (untyped) -> untyped } -> untyped
+
     private
 
     # Detects the protocol from the URI scheme
@@ -99,19 +113,6 @@ module Takagi
 
     private
 
-    # Executes a request to the server using Takagi::Message::Request
-    # @param method [Symbol] HTTP method (:get, :post, :put, :delete)
-    # @param path [String] Resource path
-    # @param payload [String] (optional) Data for POST/PUT requests
-    # @param callback [Proc] (optional) Callback function for processing the response
-    def request: (untyped method, untyped path, ?untyped? payload) { (?) -> untyped } -> untyped
-
-    # Simple request without retransmission (legacy mode)
-    def request_simple: (untyped message, untyped uri) { (?) -> untyped } -> untyped
-
-    # RFC 7252 §4.2 compliant request with automatic retransmission
-    def request_with_retransmission: (untyped message, untyped uri) { (?) -> untyped } -> untyped
-
     def send_with_retransmission: (untyped message, untyped socket, untyped uri) -> untyped
 
     def wait_for_response: (untyped message, untyped socket, untyped state) -> untyped
@@ -119,9 +120,5 @@ module Takagi
     def check_socket_for_response: (untyped message, untyped socket, untyped state) -> untyped
 
     def update_state: (untyped state, untyped response_data, untyped error) -> untyped
-
-    def handle_response_state: (untyped state) { (?) -> untyped } -> untyped
-
-    def deliver_raw_response: (untyped response) ?{ (?) -> untyped } -> untyped
   end
 end

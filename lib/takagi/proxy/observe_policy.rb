@@ -33,7 +33,7 @@ module Takagi
       # @param request [Takagi::Message::Inbound]
       # @return [Boolean]
       def observing?(request)
-        request.respond_to?(:options) && (request.options || {}).key?(OBSERVE)
+        (request.options || {}).key?(OBSERVE)
       end
 
       # The options the outbound request carries: Observe is dropped so no observation is opened.

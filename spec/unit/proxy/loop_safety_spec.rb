@@ -12,15 +12,12 @@ RSpec.describe 'Takagi::Proxy loop safety (plan row 6)' do
   let(:stack) { Takagi::MiddlewareStack.instance }
   let(:codes) { Takagi::CoAP::Registries::Response }
 
-  before do
-    @previous_router = stack.router
+  around do |example|
     @router = Takagi::Router.new
     @router.get('/local') { { message: 'answered by the proxy itself' } }
     @router.get('/echo') { { message: 'backend answered' } }
-    stack.instance_variable_set(:@router, @router)
+    with_router(@router) { example.run }
   end
-
-  after { stack.instance_variable_set(:@router, @previous_router) }
 
   def with_backend
     started = Queue.new

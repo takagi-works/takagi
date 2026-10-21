@@ -5,7 +5,7 @@ require 'logger'
 
 module Takagi
   # Stores runtime configuration loaded from YAML or manual overrides.
-  class Config # rubocop:disable Metrics/ClassLength
+  class Config # rubocop:disable Metrics/ClassLength -- pre-existing class size (not added here); this class is the single loader/validator/reader for every configuration section, so splitting it is a separate refactor
     Observability = Struct.new(:backends, keyword_init: true)
     # Only keys a live consumer reads: `async_threads` and `async_backlog_limit`
     # by `Bus`, `cleanup_interval` and `max_observer_age` by
@@ -248,17 +248,11 @@ module Takagi
       raise ArgumentError, "Invalid proxy route: #{entry.inspect}" unless entry.is_a?(Hash)
 
       ProxyRouteConfig.new(
-        prefix: proxy_route_field(entry, 'prefix'),
-        outbound: parse_proxy_mode('route outbound', proxy_route_field(entry, 'outbound'), PROXY_TRANSPORTS, nil),
-        host: proxy_route_field(entry, 'host'),
-        port: proxy_route_field(entry, 'port')
+        prefix: entry['prefix'],
+        outbound: parse_proxy_mode('route outbound', entry['outbound'], PROXY_TRANSPORTS, nil),
+        host: entry['host'],
+        port: entry['port']
       )
-    end
-
-    # Reads a route key written either with the YAML's string key or a symbol.
-    def proxy_route_field(entry, key)
-      value = entry[key]
-      value.nil? ? entry[key.to_sym] : value
     end
 
     def parse_proxy_mode(key, raw, allowed, default)

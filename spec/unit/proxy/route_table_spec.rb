@@ -180,6 +180,7 @@ RSpec.describe Takagi::Proxy::RouteTable do
       load_proxy_config <<~YAML
         port: 5683
         proxy:
+          enabled: true
           names:
             - localhost
           routes:
@@ -190,6 +191,23 @@ RSpec.describe Takagi::Proxy::RouteTable do
 
       expect { described_class.from_config(Takagi.config) }
         .to raise_error(ArgumentError, /points at the proxy itself/)
+    end
+
+    it 'refuses to build the table from a proxy section that is disabled (PROOF, row 21)' do
+      load_proxy_config <<~YAML
+        proxy:
+          enabled: false
+          names:
+            - localhost
+          routes:
+            - prefix: /sensors
+              host: 127.0.0.1
+              port: 9001
+      YAML
+
+      expect(Takagi.config.proxy.enabled).to be(false)
+      expect { described_class.from_config(Takagi.config) }
+        .to raise_error(ArgumentError, /proxy section is disabled/)
     end
   end
 end

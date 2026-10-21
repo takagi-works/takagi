@@ -110,10 +110,18 @@ module Takagi
 
       # Builds the table from a process configuration's proxy section.
       #
+      # This is the one reader of `config.proxy.enabled` in `lib/`: a section an operator turned
+      # off is not a proxy to build, so a disabled section is refused loudly instead of handing
+      # back a table whose routes would be served although `proxy.enabled` is false (row 21 of
+      # .omo/plans/coap-proxy.md). Constructing a table directly (`new`) stays configuration-free.
+      #
       # @param config [Takagi::Config] the configuration carrying the `proxy` section
       # @param own_ports [Array<Integer>, nil] the ports this proxy listens on; defaults to the
       #   configured port, which is what lets a bare name in `names` be recognized as our own
+      # @raise [ArgumentError] when the proxy section is disabled (`proxy.enabled` is false)
       def self.from_config(config, own_ports: nil)
+        raise ArgumentError, 'the proxy section is disabled (proxy.enabled is false)' unless config.proxy.enabled
+
         new(
           routes: config.proxy.routes,
           names: config.proxy.names,
@@ -162,14 +170,15 @@ module Takagi
 
       # The route whose backend authority is exactly `authority`, if any.
       def route_for_authority(authority)
-        @routes.find { |route| route.authority == authority }
+        wanted = canonical_authority(authority)
+        @routes.find { |route| route.authority == wanted }
       end
 
       # Whether `host:port` names the proxy itself (RFC 7252 5.10.2: a proxy MUST recognize all of
       # its server names, aliases, local variations and numeric addresses). The port is part of the
       # authority, so a bare name only identifies us on a port we actually listen on.
       def own_authority?(host, port)
-        wanted = host.to_s.downcase
+        wanted = canonical_authority(host)
         @names.any? do |name|
           next false unless name.host == wanted
 
@@ -245,11 +254,22 @@ module Takagi
         prefix.is_a?(String) && prefix.start_with?('/')
       end
 
+      # The one canonical form of a host or of a "host:port" authority in this table: lower case,
+      # with any IPv6 literal UNBRACKETED. RFC 3986 3.2.2 encloses the literal only inside a URI
+      # authority (and RFC 7252 6.5 step 2 keeps that bracket on a Uri-Host value), so this is the
+      # rule that lets `[::1]` and `::1` name one host, and `[::1]:9000` and `::1:9000` one
+      # authority, in a configured name, in a route and in a lookup (`ForwardTarget` applies the same
+      # rule to the host a URI form yields). A value the pattern cannot read - a malformed authority -
+      # is left as it is, so nothing malformed becomes well formed.
+      def canonical_authority(text)
+        text.to_s.strip.downcase.sub(/\A\[(.+)\](?=:|\z)/, '\1')
+      end
+
       def normalize_host(host)
-        name = host.to_s.strip
+        name = canonical_authority(host)
         raise ArgumentError, "proxy route backend host must not be empty: #{host.inspect}" if name.empty?
 
-        name.downcase.sub(/\A\[(.+)\]\z/, '\1')
+        name
       end
 
       def normalize_port(port)
@@ -287,12 +307,20 @@ module Takagi
         raise ArgumentError, "proxy route outbound transport must be one of #{TRANSPORTS.map(&:inspect).join(', ')}: #{outbound.inspect}"
       end
 
+      # A name is an authority: "host" or "host:port". The pair is read by `URI` (the platform's
+      # own authority parser) from the `coap://` form of the text; text URI cannot read - a
+      # malformed authority - is kept whole as the host, exactly as `canonical_authority` leaves one.
       def parse_name(name)
         text = name.to_s.strip
         raise ArgumentError, 'a proxy name must not be empty' if text.empty?
 
-        match = text.match(/\A(\[[^\]]+\]|[^:]+):(\d+)\z/)
-        Name.new(host: normalize_host(match ? match[1] : text), port: match && match[2].to_i)
+        authority = URI.parse("coap://#{text}")
+        host = authority.host.to_s
+        return Name.new(host: normalize_host(text), port: nil) if host.empty?
+
+        Name.new(host: normalize_host(host), port: authority.port)
+      rescue URI::InvalidURIError
+        Name.new(host: normalize_host(text), port: nil)
       end
     end
   end

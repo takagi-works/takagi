@@ -1,6 +1,12 @@
 module Takagi
   class Proxy::OptionRules
-    def self.unsafe_unknown?: (untyped request) -> bool
-    def self.critical_unknown?: (untyped request) -> bool
+    # The unrecognized Unsafe options a proxy must not forward (RFC 7252 5.7.1).
+    def self.unrecognized_unsafe: (Hash[Integer, untyped]? options) -> Array[Integer]
+
+    # The unrecognized Critical options a non-proxying endpoint must refuse (RFC 7252 5.4.1).
+    def self.unrecognized_critical: (Hash[Integer, untyped]? options) -> Array[Integer]
+
+    # The options the registry does not name.
+    def self.unrecognized: (Hash[Integer, untyped]? options) -> Array[Integer]
   end
 end

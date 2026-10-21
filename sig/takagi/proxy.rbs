@@ -15,12 +15,16 @@ module Takagi
       ?protocols: Array[Symbol],
       ?router: untyped,
       ?worker_processes: Integer,
-      ?worker_threads: Integer?
+      ?worker_threads: Integer?,
+      ?bind_address: String
     ) -> void
 
     def port: (Symbol protocol) -> Integer
     def ports: -> Hash[Symbol, Integer]
     def run!: -> void
     def shutdown!: -> void
+
+    # The pids the supervising cluster tracks, by fork order; nil when this process forked nothing.
+    def worker_pids: -> Array[Integer]?
   end
 end

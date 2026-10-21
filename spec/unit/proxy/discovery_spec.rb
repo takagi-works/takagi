@@ -12,14 +12,11 @@ RSpec.describe 'Takagi::Proxy discovery aggregation (plan row 8)' do
   let(:stack) { Takagi::MiddlewareStack.instance }
   let(:codes) { Takagi::CoAP::Registries::Response }
 
-  before do
-    @previous_router = stack.router
+  around do |example|
     @router = Takagi::Router.new
     @router.get('/.well-known/core') { "</a>;n=#{SecureRandom.hex(4)},</b>;n=#{SecureRandom.hex(4)}" }
-    stack.instance_variable_set(:@router, @router)
+    with_router(@router) { example.run }
   end
-
-  after { stack.instance_variable_set(:@router, @previous_router) }
 
   def boot_backends(count)
     started = Queue.new
@@ -107,7 +104,11 @@ RSpec.describe 'Takagi::Proxy discovery aggregation (plan row 8)' do
 
         expect(response).not_to be_nil
         expect(response.code).to eq(codes::CONTENT)
-        expect(response.payload).to eq('/b0,/b1')
+        # Read the way the repo reads a discovery document (spec/rfc/rfc_6690_core_link_format_spec.rb:71):
+        # one link-format entry per route, each entry the writer's own `<path>;attr` shape.
+        entries = response.payload.split(',')
+        expect(entries).to eq(['</b0>', '</b1>'])
+        expect(entries).to all(match(/\A<[^>]+>(?:;[^,;=]+(?:=(?:"[^"]*"|[^,;]+))?)*\z/))
       end
     end
   end
@@ -120,6 +121,32 @@ RSpec.describe 'Takagi::Proxy discovery aggregation (plan row 8)' do
 
         expect(first.payload).to include('</b0/a>')
         expect(second.payload).not_to eq(first.payload)
+      end
+    end
+  end
+
+  context 'when a backend answers a quoted attribute value containing a comma' do
+    # RFC 6690 2: "commas can also occur in quoted strings and URIs but do not end a description".
+    around do |example|
+      @router = Takagi::Router.new
+      @router.get('/.well-known/core') { '</a>;title="a,b",</b>;rt="sensor.x"' }
+      with_router(@router) { example.run }
+    end
+
+    it 'keeps the quoted value intact with one entry per resource (PROOF)' do
+      boot_backends(3) do |backends|
+        with_proxy(routes_for(backends), :aggregate) do |proxy|
+          response = discover(proxy.port(:udp))
+
+          expect(response).not_to be_nil
+          expect(response.code).to eq(codes::CONTENT)
+
+          entries = Takagi::Discovery::CoreLinkFormat.split_entries(response.payload)
+          expect(entries.length).to eq(6)
+          backends.each_index do |index|
+            expect(entries).to include("</b#{index}/a>;title=\"a,b\"", "</b#{index}/b>;rt=\"sensor.x\"")
+          end
+        end
       end
     end
   end

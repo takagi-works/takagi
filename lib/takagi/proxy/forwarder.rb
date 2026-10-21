@@ -141,13 +141,13 @@ module Takagi
         return refuse(request, BAD_OPTION, 'a forward-proxy request must name an absolute URI') if target.nil?
         return nil if own_target?(target)
 
+        transport = ForwardTarget.transport_for(target.scheme)
+        return refuse(request, PROXYING_NOT_SUPPORTED, "unsupported scheme #{target.scheme.inspect}") unless transport
         unless @route_table&.serves_forward_proxy?(target.authority)
-          return refuse(request, PROXYING_NOT_SUPPORTED,
-                        "this proxy will not forward-proxy to #{target.authority}")
+          return refuse(request, PROXYING_NOT_SUPPORTED, "this proxy will not forward-proxy to #{target.authority}")
         end
 
-        transport = ForwardTarget.transport_for(target.scheme)
-        answer(request, exchange_at(request, target.host, target.port, transport, target.path),
+        answer(request, exchange_at(request, target.host, target.port, transport, target.path, target: target),
                target.authority, transport)
       end
 
@@ -169,8 +169,9 @@ module Takagi
         @route_table&.own_authority?(target.host, target.port) || false
       end
 
-      # One outbound hop to an explicit authority.
-      def exchange_at(request, host, port, transport, path)
+      # One outbound hop to an explicit authority. `target`, when given, is the forward-proxy
+      # destination whose authority is written back as Uri-Host/Uri-Port (nil on a prefix route).
+      def exchange_at(request, host, port, transport, path, target: nil)
         endpoint = endpoint_for(host, port, transport)
         client = Takagi::Client.new(
           endpoint,
@@ -179,15 +180,15 @@ module Takagi
           use_retransmission: false
         )
         begin
-          place(client, request, path, transport, endpoint)
+          place(client, request, path, transport, endpoint, target)
         ensure
           client.close
         end
       end
 
-      def place(client, request, path, transport, endpoint)
+      def place(client, request, path, transport, endpoint, target = nil)
         raw = client.raw_exchange(method_of(request), path, request.payload,
-                                  options: forwarded_options(request),
+                                  options: forwarded_options(request, target),
                                   token: outbound_token(request, endpoint))
         return :no_answer if raw.nil?
 
@@ -262,9 +263,20 @@ module Takagi
         request.to_response(response.code, response.payload, options: reply_options(response))
       end
 
+      # The endpoint URI an outbound hop is placed on.
       def endpoint_for(host, port, transport)
         scheme = transport.to_sym == :tcp ? 'coap+tcp' : 'coap'
-        "#{scheme}://#{host}:#{port}"
+        "#{scheme}://#{bracketed_host(host)}:#{port}"
+      end
+
+      # `host` is the proxy's canonical, UNBRACKETED authority host, but every place it leaves the
+      # proxy carries a URI host, and an IPv6 literal is written with brackets in BOTH: RFC 3986
+      # 3.2.2 brackets it inside a URI authority, and RFC 7252 6.1 adopts IP-literal from RFC 3986
+      # - whose production is "[" ( IPv6address / IPvFuture ) "]", brackets included - so 6.5 step
+      # 2 fails a Uri-Host value that is not a valid reg-name, IP-literal or IPv4address. Without
+      # this, an IPv6 backend produced the malformed `Uri-Host: 2001:db8::2:1`.
+      def bracketed_host(host)
+        host.include?(':') && !host.start_with?('[') ? "[#{host}]" : host
       end
 
       def refuse(request, code, reason)
@@ -272,8 +284,20 @@ module Takagi
         request.to_response(code, nil)
       end
 
-      def forwarded_options(request)
-        @observe.forwarded_options(request, reject_consumed(request.options))
+      # RFC 7252 5.7.2: for a CoAP-to-CoAP proxy "the request URI is decoded and split into the
+      # Uri-Host, Uri-Port, Uri-Path and Uri-Query Options", which "consumes the Proxy-Uri or
+      # Proxy-Scheme option". Uri-Path and Uri-Query come from the path the client machinery is
+      # handed; Uri-Host and Uri-Port are rebuilt from `target` here, because `reject_consumed`
+      # strips the inbound ones and `Message::Request#build_options` derives only the path and the
+      # query.
+      #
+      # `target` is the resolved forward-proxy destination, nil on the prefix-route hop, whose
+      # destination is the route's own authority rather than a URI the client named (RFC 7252 5.7.3).
+      def forwarded_options(request, target = nil)
+        options = reject_consumed(request.options)
+        options[CoAP::Registries::Option::URI_HOST] = bracketed_host(target.host) if target
+        options[CoAP::Registries::Option::URI_PORT] = target.port if target
+        @observe.forwarded_options(request, options)
       end
 
       def reply_options(response)

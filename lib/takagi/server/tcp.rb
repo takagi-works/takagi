@@ -115,7 +115,7 @@ module Takagi
       #   in-process server and every forked child build their own, after the fork.
       def initialize(port: 5683, worker_processes: 1, worker_threads: nil, # rubocop:disable Metrics/ParameterLists -- tcp-multi-worker rows 1,6 kw 8/9; refactor
                      middleware_stack: nil, router: nil, logger: nil, watcher: nil, sender: nil,
-                     max_connections: nil)
+                     max_connections: nil, bind_address: '0.0.0.0')
         @port = port
         @worker_processes = worker_processes
         @worker_threads = worker_threads
@@ -134,7 +134,7 @@ module Takagi
 
         Initializer.run!
 
-        @server = TCPServer.new('0.0.0.0', @port)
+        @server = TCPServer.new(bind_address, @port)
         # port: 0 asks the kernel for a free port, so the port that was ACTUALLY bound
         # is the only truth downstream: the :server_starting/:server_stopped payloads,
         # the boot log and a worker's own log line all report this value. Verified

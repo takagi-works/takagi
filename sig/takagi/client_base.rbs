@@ -139,5 +139,26 @@ module Takagi
     # @param response_data [String] Raw response data
     # @return [Hash, Array, nil] Parsed JSON or nil
     def parse_json_response: (untyped response_data) -> untyped
+
+    # Sends one request and returns the RAW response bytes, or nil when the peer did not answer.
+    #
+    # The runtime marks this method `protected` (`client_base.rb:369,392`); RBS 3.x has no
+    # `protected` member section, so it is declared in the public one.
+    #
+    # @param method [Symbol] :get, :post, :put, :delete
+    # @param path [String] Resource path, resolved against the client's server URI
+    # @param payload [String, Hash, nil] Data to send
+    # @param options [Hash] CoAP options { option_number => value }
+    # @param type [Integer, nil] CoAP message type
+    # @param token [String, nil] The token to use; a fresh random one when nil
+    # @return [String, nil] Raw response bytes, or nil when the peer did not answer
+    def raw_exchange: (
+      Symbol method,
+      String path,
+      ?(String | Hash[untyped, untyped])? payload,
+      ?options: Hash[Integer, untyped],
+      ?type: Integer?,
+      ?token: String?
+    ) -> String?
   end
 end

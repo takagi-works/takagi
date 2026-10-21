@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'delegate'
+
 module Takagi
   # The proxy's entry point: one service that listens for the protocols it is given and answers
   # every request with the router and the middleware stack injected here. Rows 2-9 of
@@ -55,8 +57,10 @@ module Takagi
     #   listener: the transports of one service never fork different counts
     # @param worker_threads [Integer, nil] threads per serving process; nil keeps the transport's
     #   own default, which is 2 readers for UDP and a thread per connection for TCP
-    def initialize(route_table:, middleware_stack: nil, port: 0, protocols: DEFAULT_PROTOCOLS,
-                   router: nil, worker_processes: 1, worker_threads: nil)
+    def initialize(route_table:, middleware_stack: nil, port: 0, # rubocop:disable Metrics/ParameterLists -- a service's transport-config list, as the transports carry
+                   protocols: DEFAULT_PROTOCOLS, router: nil, worker_processes: 1,
+                   worker_threads: nil, bind_address: '0.0.0.0')
+      @bind_address = bind_address
       @route_table = route_table
       @middleware_stack = middleware_stack || Takagi::MiddlewareStack.instance
       @router = router || @middleware_stack.router
@@ -109,7 +113,8 @@ module Takagi
     private
 
     def build_server(protocol, port, worker_processes, worker_threads)
-      options = { port: port, router: @router, middleware_stack: @stack }
+      options = { port: port, router: @router, middleware_stack: @stack,
+                  bind_address: @bind_address }
       options[:worker_processes] = worker_processes if worker_processes
       options[:worker_threads] = worker_threads if worker_threads
       Takagi::Server::Registry.build(protocol, **options)
@@ -134,8 +139,12 @@ module Takagi
       # @param request [Takagi::Message::Inbound]
       # @return [Object] the answer the worker turns into a response
       def call(request)
-        discovery = @discovery.answer(request)
-        return discovery if discovery
+        if discovery_request?(request)
+          # A `/.well-known/core` request is a LOCAL path (row 6 criterion (e)) and is never placed on
+          # the outbound hop. Its local refusal is decided BEFORE the discovery answer is produced, so
+          # an unrecognized critical option draws 4.02 (RFC 7252 5.4.1) rather than a 2.05 masking it.
+          return @forwarder.local_refusal(request) || @discovery.answer(request)
+        end
 
         forward_proxy = @forwarder.forward_proxy(request)
         return forward_proxy if forward_proxy
@@ -156,54 +165,42 @@ module Takagi
         @forwarder.local_refusal(request) || @local.call(request)
       end
 
+      private
+
+      # Whether the request addresses the proxy's own discovery resource, which the proxy answers
+      # itself and never forwards.
+      def discovery_request?(request)
+        request.uri.path.to_s == Discovery::WELL_KNOWN
+      end
+
       # A request that named the proxy itself, seen by the local stack at the PATH the proxy was
       # addressed at: a forward-proxy request carries no Uri-Path, so the datagram's own path is not
       # the resource the target names.
-      class LocalRequest
+      class LocalRequest < SimpleDelegator
         def initialize(request, path)
-          @request = request
+          super(request)
           @uri = Uri.new(request.uri, path)
         end
 
         attr_reader :uri
 
-        def respond_to_missing?(name, include_private = false)
-          @request.respond_to?(name, include_private) || super
-        end
-
-        def method_missing(name, ...)
-          return @request.public_send(name, ...) if @request.respond_to?(name)
-
-          super
-        end
-
         # `Object#method` shadows the request's own `method` reader, so it is delegated by hand.
         def method
-          @request.method
+          __getobj__.method
         end
 
         # The request's own URI with the target's path: everything else (scheme, host, port, query)
         # stays what the datagram carried, so the local stack sees a complete URI.
-        class Uri
+        class Uri < SimpleDelegator
           attr_reader :path
 
           def initialize(original, path)
-            @original = original
+            super(original)
             @path = path
           end
 
           def to_s
-            "#{@original.scheme}://#{@original.host}:#{@original.port}#{@path}"
-          end
-
-          def respond_to_missing?(name, include_private = false)
-            @original.respond_to?(name, include_private) || super
-          end
-
-          def method_missing(name, ...)
-            return @original.public_send(name, ...) if @original.respond_to?(name)
-
-            super
+            "#{scheme}://#{host}:#{port}#{@path}"
           end
         end
       end

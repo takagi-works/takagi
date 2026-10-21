@@ -164,7 +164,7 @@ module Takagi
     # @param uri [URI] Destination URI
     # @return [String, nil] raw framed response, or nil on transport error
     def exchange(message, uri)
-      socket = TCPSocket.new(uri.host, uri.port || 5683)
+      socket = TCPSocket.new(uri.hostname, uri.port || 5683)
       socket.write(build_csm_message.to_bytes(transport: :tcp))
       socket.write(message.to_bytes(transport: :tcp))
 
@@ -226,7 +226,7 @@ module Takagi
     #
     # @return [Boolean] true when a Pong with the probe's token arrives in time
     def transport_ping
-      socket = TCPSocket.new(server_uri.host, server_uri.port || 5683)
+      socket = TCPSocket.new(server_uri.hostname, server_uri.port || 5683)
       token = SecureRandom.hex(4)
       socket.write(build_csm_message.to_bytes(transport: :tcp))
       socket.write(ping_message(token).to_bytes(transport: :tcp))

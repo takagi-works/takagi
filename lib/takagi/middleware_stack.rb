@@ -25,7 +25,12 @@ module Takagi
   class MiddlewareStack
     include Singleton
 
-    attr_reader :middlewares, :router
+    attr_reader :middlewares
+
+    # Points the stack at another router. Only specs write this (the proxy specs install a throwaway
+    # router for one example through the `with_router` helper); `lib/` never assigns it after
+    # `initialize`, so it is a test seam rather than runtime configuration.
+    attr_accessor :router
 
     def initialize
       @logger = Takagi.logger

@@ -30,6 +30,7 @@ module Takagi
         @sender = options.fetch(:sender)
         @logger = options.fetch(:logger)
         @port = options.fetch(:port)
+        @bind_address = options.fetch(:bind_address, '0.0.0.0')
         @threads = options.fetch(:threads)
         @drain_deadline = options.fetch(:drain_deadline, DRAIN_DEADLINE)
         @stop_requested = options.fetch(:stop_requested, nil)
@@ -50,7 +51,7 @@ module Takagi
         @queue = Queue.new
         @readers = Array.new(@threads) { spawn_thread(@queue) }
 
-        @logger.debug "[Worker PID: #{Process.pid}] Listening on CoAP://0.0.0.0:#{@port} with #{@threads} threads"
+        @logger.debug "[Worker PID: #{Process.pid}] Listening on CoAP://#{@bind_address}:#{@port} with #{@threads} threads"
         process_loop(@queue)
       ensure
         # This loop's end IS the stop path, so the drain runs here: the receive loop has

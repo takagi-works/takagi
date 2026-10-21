@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'socket'
+require_relative 'network/udp_socket'
 require 'forwardable'
 require_relative 'client_base'
 require_relative 'message/retransmission_manager'
@@ -210,9 +211,9 @@ module Takagi
     #
     # @return [Boolean] true when a Reset carrying the probe's Message ID arrives
     def transport_ping
-      socket = UDPSocket.new
+      socket = Takagi::Network::UdpSocket.for(server_uri.hostname)
       message = build_ping_message
-      socket.send(message.to_bytes, 0, server_uri.host, server_uri.port || 5683)
+      socket.send(message.to_bytes, 0, server_uri.hostname, server_uri.port || 5683)
 
       read_ping_reset(socket, message.message_id)
     rescue StandardError => e
@@ -233,8 +234,8 @@ module Takagi
     # @param uri [URI] Destination URI
     # @return [String, nil] raw response bytes, or nil on timeout/transport error
     def exchange_simple(message, uri)
-      socket = UDPSocket.new
-      socket.send(message.to_bytes, 0, uri.host, uri.port || 5683)
+      socket = Takagi::Network::UdpSocket.for(uri.hostname)
+      socket.send(message.to_bytes, 0, uri.hostname, uri.port || 5683)
 
       read_answer(socket, message)
     rescue StandardError => e
@@ -264,7 +265,7 @@ module Takagi
     # @param uri [URI] Destination URI
     # @return [String, nil] raw response bytes, or nil on timeout/transport error
     def exchange_with_retransmission(message, uri)
-      socket = UDPSocket.new
+      socket = Takagi::Network::UdpSocket.for(uri.hostname)
       state = send_with_retransmission(message, socket, uri)
       socket.close
       return state[:response_data] if state[:response_received] && !state[:error]
@@ -300,7 +301,7 @@ module Takagi
       state = { response_received: false, response_data: nil, error: nil }
 
       @retransmission_manager.send_confirmable(
-        message.message_id, message.to_bytes, socket, uri.host, uri.port || 5683
+        message.message_id, message.to_bytes, socket, uri.hostname, uri.port || 5683
       ) { |resp, err| update_state(state, resp, err) }
 
       wait_for_response(message, socket, state)

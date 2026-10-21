@@ -13,6 +13,31 @@ module Takagi
         new(router, query).generate
       end
 
+      # Formats already-resolved entries as one CoRE Link Format document (RFC 6690 2): the same
+      # entry shape `generate` produces, without the config-driven server entry.
+      #
+      # @param entries [Array<#path, #metadata>]
+      # @return [String]
+      def self.for_entries(entries)
+        new(nil, nil).document(entries)
+      end
+
+      # One entry (RFC 6690 2 `link-value`) as the writer emits it: a URI-Reference, a quoted
+      # string, or anything that is neither a comma nor one of those - a comma is the separator.
+      ENTRY = /(?:<[^>]*>|"(?:\\.|[^"\\])*"|[^,])+/
+
+      # Splits a CoRE Link Format document back into its entries (RFC 6690 2), the inverse of
+      # `for_entries`/`document`. A comma ends a description only outside a URI-Reference and
+      # outside a quoted string, where the RFC allows one to appear without ending anything:
+      # "commas can also occur in quoted strings and URIs but do not end a description". An empty
+      # segment is not a link-value, so a blank document yields no entry.
+      #
+      # @param document [String]
+      # @return [Array<String>]
+      def self.split_entries(document)
+        document.to_s.scan(ENTRY)
+      end
+
       def initialize(router, raw_query)
         @router = router
         @query = parse_query(raw_query)
@@ -22,7 +47,13 @@ module Takagi
         resources = router.link_format_entries
         server_entry = server_link_entry
         resources << server_entry if server_entry
-        filtered = filter_resources(resources.reject { |entry| entry.path == '/.well-known/core' })
+        document(resources)
+      end
+
+      # @param entries [Array<#path, #metadata>]
+      # @return [String]
+      def document(entries)
+        filtered = filter_resources(entries.reject { |entry| entry.path == '/.well-known/core' })
         filtered.map { |entry| format_entry(entry) }.join(',')
       end
 

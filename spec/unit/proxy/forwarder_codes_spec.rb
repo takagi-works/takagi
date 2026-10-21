@@ -14,8 +14,7 @@ RSpec.describe 'Takagi::Proxy refusal and failure codes (plan row 3)' do
   let(:stack) { Takagi::MiddlewareStack.instance }
   let(:codes) { Takagi::CoAP::Registries::Response }
 
-  before do
-    @previous_router = stack.router
+  around do |example|
     @router = Takagi::Router.new
     @router.get('/echo') { |req, _params| { seen_token: req.token.unpack1('H*') } }
     @router.get('/unsafe-answer') do |req, _params|
@@ -26,10 +25,8 @@ RSpec.describe 'Takagi::Proxy refusal and failure codes (plan row 3)' do
       Takagi::Message::Outbound.new(code: codes::CONTENT, payload: 'safe', token: req.token,
                                     message_id: req.message_id, options: { 68 => 'ok' })
     end
-    stack.instance_variable_set(:@router, @router)
+    with_router(@router) { example.run }
   end
-
-  after { stack.instance_variable_set(:@router, @previous_router) }
 
   def with_backend
     started = Queue.new
@@ -78,6 +75,21 @@ RSpec.describe 'Takagi::Proxy refusal and failure codes (plan row 3)' do
         expect(response).not_to be_nil
         expect(response.code).to eq(codes::BAD_OPTION)
       end
+    end
+  end
+
+  # Row 20: a `/.well-known/core` request is a LOCAL path (row 6 criterion (e)), so the local
+  # refusal is decided before the discovery answer is produced - an unrecognized critical option
+  # must draw 4.02 rather than be masked by the 2.05 discovery answer (RFC 7252 5.4.1).
+  it 'decides the local refusal before answering discovery (PROOF)' do
+    with_proxy([]) do |proxy|
+      flagged = ask(proxy.port(:udp), '/.well-known/core', options: { 69 => 'x' })
+      expect(flagged).not_to be_nil
+      expect(flagged.code).to eq(codes::BAD_OPTION)
+
+      plain = ask(proxy.port(:udp), '/.well-known/core')
+      expect(plain).not_to be_nil
+      expect(plain.code).to eq(codes::CONTENT)
     end
   end
 

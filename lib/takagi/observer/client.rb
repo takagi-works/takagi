@@ -3,6 +3,7 @@
 require 'uri'
 require 'socket'
 require 'securerandom'
+require_relative '../network/udp_socket'
 
 module Takagi
   module Observer
@@ -13,7 +14,7 @@ module Takagi
       def initialize(uri, recv_buffer_size: RECV_BUFFER_SIZE)
         @uri = URI.parse(uri)
         @token = SecureRandom.hex(4)
-        @socket = UDPSocket.new
+        @socket = Takagi::Network::UdpSocket.for(@uri.hostname)
         @on_notify = nil
         @recv_buffer_size = recv_buffer_size
       end
@@ -42,7 +43,7 @@ module Takagi
           token: @token,
           observe: 0
         )
-        @socket.send(message.to_bytes, 0, @uri.host, @uri.port || 5683)
+        @socket.send(message.to_bytes, 0, @uri.hostname, @uri.port || 5683)
       end
 
       def listen_for_notifications

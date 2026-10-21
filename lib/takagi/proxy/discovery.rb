@@ -11,7 +11,8 @@ module Takagi
     # backend keeps that promise. Nothing is cached: the merge happens per request, so a resource a
     # backend adds is visible on the very next discovery.
     #
-    # `:local` lists the proxy's own routes and nothing else.
+    # `:local` answers with the proxy's own routes and nothing else, one CoRE Link Format entry per
+    # route, so a constrained client parses the document.
     class Discovery
       WELL_KNOWN = '/.well-known/core'
       CONTENT_FORMAT = Takagi::Discovery::CoreLinkFormat::CONTENT_FORMAT
@@ -43,8 +44,16 @@ module Takagi
       private
 
       def local(request)
-        payload = @route_table.routes.map(&:prefix).uniq.join(',')
-        respond(request, payload)
+        respond(request, Takagi::Discovery::CoreLinkFormat.for_entries(local_entries))
+      end
+
+      # One entry per route the proxy serves (RFC 6690 4).
+      #
+      # @return [Array<Takagi::Router::RouteEntry>]
+      def local_entries
+        @route_table.routes.map(&:prefix).uniq.map do |prefix|
+          Takagi::Router::RouteEntry.new(method: 'GET', path: prefix, block: nil)
+        end
       end
 
       def aggregate(request)
@@ -60,7 +69,7 @@ module Takagi
         body = fetch(route)
         return [] if body.nil?
 
-        body.to_s.split(',').map { |entry| rewrite(entry, route.prefix) }
+        Takagi::Discovery::CoreLinkFormat.split_entries(body).map { |entry| rewrite(entry, route.prefix) }
       end
 
       def fetch(route)

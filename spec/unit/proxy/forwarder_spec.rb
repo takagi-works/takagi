@@ -8,16 +8,15 @@ require 'json'
 #
 # PROOF: nothing here exists on the untouched tree (`Takagi::Proxy` itself is row 10), so every
 # example fails before this row. Routing happens in the STACK's router at call time
-# (`middleware_stack.rb:75`) and the stack exposes no setter, so the one router is installed for
-# the example and restored afterwards (the wiring `spec/unit/controller_threads_spec.rb:49` uses).
+# (`middleware_stack.rb:75`), so a throwaway router is installed for the example through the
+# shared `with_router` helper (row 23), which restores the stack's router in an `ensure`.
 # The outbound hop is only visible ON THE WIRE - `Hooks.emit` is Scope::LOCAL and this server forks
 # even at `worker_processes: 1` - so the backend echoes the token and Message ID it actually saw.
 RSpec.describe 'Takagi::Proxy forwarding path (plan row 2)' do
   let(:stack) { Takagi::MiddlewareStack.instance }
   let(:content_code) { Takagi::CoAP::Registries::Response::CONTENT }
 
-  before do
-    @previous_router = stack.router
+  around do |example|
     @router = Takagi::Router.new
     # The proxy forwards the RELATIVE path (row 1 strips the matched prefix), so the backend is
     # mounted at the root and serves `/echo` for a client asking the proxy for `/backend/echo`.
@@ -25,10 +24,8 @@ RSpec.describe 'Takagi::Proxy forwarding path (plan row 2)' do
       { seen_token: req.token.unpack1('H*'), seen_mid: req.message_id }
     end
     @router.get('/local/hello') { { message: 'answered locally' } }
-    stack.instance_variable_set(:@router, @router)
+    with_router(@router) { example.run }
   end
-
-  after { stack.instance_variable_set(:@router, @previous_router) }
 
   def with_backend
     started = Queue.new

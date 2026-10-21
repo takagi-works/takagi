@@ -25,12 +25,21 @@ module Takagi
         new(request, uri_option, scheme_option).target
       end
 
-      # The transport a scheme maps to.
+      # The transport a scheme maps to, or nil for a scheme this proxy cannot place a hop on.
+      #
+      # RFC 7252 5.7.2: "the scheme of the request URI defines the outgoing protocol and its
+      # details" - so only "coap" (CoAP over UDP) and "coap+tcp" (RFC 8323) are served. A proxy
+      # "unable ... to act as proxy for the request URI" MUST return 5.05 (5.7.2, 5.10.2,
+      # 5.9.3.6), which is what the nil tells the caller to do: every other scheme is refused
+      # rather than silently placed on UDP.
       #
       # @param scheme [String] e.g. "coap" or "coap+tcp"
-      # @return [Symbol] :udp or :tcp
+      # @return [Symbol, nil] :udp, :tcp, or nil when the scheme is not served
       def self.transport_for(scheme)
-        scheme.to_s.downcase == 'coap+tcp' ? :tcp : :udp
+        case scheme.to_s.downcase
+        when 'coap' then :udp
+        when 'coap+tcp' then :tcp
+        end
       end
 
       def initialize(request, uri_option, scheme_option)
@@ -53,7 +62,7 @@ module Takagi
         return nil if uri.host.nil?
 
         scheme = uri.scheme.to_s.downcase
-        Target.new(host: uri.host.to_s.downcase, port: uri.port || DEFAULT_PORT,
+        Target.new(host: canonical_host(uri.host), port: uri.port || DEFAULT_PORT,
                    path: path_with_query(uri), scheme: scheme)
       rescue URI::InvalidURIError
         nil
@@ -64,8 +73,23 @@ module Takagi
         host = @request.options[CoAP::Registries::Option::URI_HOST]
         return nil if host.nil?
 
-        Target.new(host: host.to_s.downcase, port: uri_port, path: path_from_request,
+        Target.new(host: canonical_host(host), port: uri_port, path: path_from_request,
                    scheme: @scheme_option.to_s.downcase)
+      end
+
+      # One canonical host form across every authority boundary: an IPv6 literal is kept
+      # UNBRACKETED, which is the form `RouteTable#normalize_host` produces, so a URL form and a
+      # route's backend authority are never two spellings of the same host. RFC 3986 3.2.2 brackets
+      # the literal inside a URI authority and RFC 7252 6.5 step 2 keeps that bracket on a Uri-Host
+      # value, so the brackets are removed here - by `URI#hostname`, the platform's own rule, not by
+      # a second parser - and re-added wherever the host leaves the proxy (`Forwarder#bracketed_host`,
+      # which both the outbound endpoint URI and the Uri-Host Option value go through). A value URI
+      # cannot read (an already-unbracketed literal, or a
+      # malformed authority) passes through unchanged, so nothing malformed becomes well formed.
+      def canonical_host(host)
+        URI.parse("coap://#{host}/").hostname.downcase
+      rescue URI::InvalidURIError
+        host.to_s.downcase
       end
 
       def uri_port

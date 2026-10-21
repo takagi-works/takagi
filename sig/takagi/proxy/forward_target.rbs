@@ -1,10 +1,25 @@
 module Takagi
   class Proxy::ForwardTarget
-    attr_reader host: String
-    attr_reader port: Integer
-    attr_reader protocol: Symbol
-    attr_reader prefix: String
+    # Host, port, path (with any query) and scheme of the destination.
+    class Target
+      attr_accessor host: String?
+      attr_accessor port: Integer?
+      attr_accessor path: String?
+      attr_accessor scheme: String?
 
-    def initialize: (host: String, port: Integer, protocol: Symbol, prefix: String) -> void
+      def authority: () -> String
+    end
+
+    DEFAULT_PORT: Integer
+
+    # @return [Target, nil] nil when the request names no usable absolute URI
+    def self.for: (untyped request, untyped? uri_option, untyped? scheme_option) -> Target?
+
+    # nil for a scheme this proxy cannot place a hop on (the caller answers 5.05).
+    def self.transport_for: (untyped scheme) -> Symbol?
+
+    def initialize: (untyped request, untyped? uri_option, untyped? scheme_option) -> void
+
+    def target: () -> Target?
   end
 end

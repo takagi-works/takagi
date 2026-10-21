@@ -1,6 +1,19 @@
 module Takagi
   class Proxy::ObservePolicy
-    def strip_observe: (untyped response) -> untyped
-    def cancel_observation: (untyped backend_request, untyped backend_response) -> void
+    OBSERVE: Integer
+
+    def initialize: (?logger: untyped) -> void
+
+    # Whether the request asks to observe.
+    def observing?: (Takagi::Message::Inbound request) -> bool
+
+    # The options the outbound request carries: Observe is dropped, so no observation is opened.
+    def forwarded_options: (
+      Takagi::Message::Inbound request,
+      Hash[Integer, untyped] options
+    ) -> Hash[Integer, untyped]
+
+    # The options the client's response carries: Observe is never handed back.
+    def reply_options: (Hash[Integer, untyped]? options) -> Hash[Integer, untyped]
   end
 end

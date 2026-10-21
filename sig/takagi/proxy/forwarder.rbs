@@ -1,8 +1,43 @@
 module Takagi
   class Proxy::Forwarder
-    attr_reader route_table: untyped
+    # The request-target options the proxy rebuilds for the outbound hop (RFC 7252 5.7.2).
+    TARGET_OPTIONS: Array[Integer]
 
-    def initialize: (route_table: untyped) -> void
-    def forward: (untyped request, Symbol inbound_protocol) -> untyped
+    # The forward-proxy options (RFC 7252 5.10.2), consumed by the proxy.
+    PROXY_URI: Integer
+    PROXY_SCHEME: Integer
+
+    # Everything the proxy rebuilds or consumes per hop.
+    CONSUMED_OPTIONS: Array[Integer]
+
+    # The codes this proxy answers itself.
+    BAD_OPTION: Integer
+    BAD_GATEWAY: Integer
+    GATEWAY_TIMEOUT: Integer
+    PROXYING_NOT_SUPPORTED: Integer
+
+    # The CoAP method each request code means on the wire.
+    METHODS_BY_CODE: Hash[Integer, Symbol]
+
+    def initialize: (
+      ?route_table: Takagi::Proxy::RouteTable?,
+      ?timeout: Numeric,
+      ?logger: untyped
+    ) -> void
+
+    # Forwards `request` to the backend `match` names and maps the answer back onto the inbound hop.
+    def forward: (
+      Takagi::Message::Inbound request,
+      Takagi::Proxy::RouteTable::Match match
+    ) -> Takagi::Message::Outbound
+
+    # Handles the forward-proxy form (RFC 7252 5.10.2); nil when the request is not one.
+    def forward_proxy: (Takagi::Message::Inbound request) -> Takagi::Message::Outbound?
+
+    # The local path's refusal for an unrecognized critical option; nil when it may be handled locally.
+    def local_refusal: (Takagi::Message::Inbound request) -> Takagi::Message::Outbound?
+
+    # The path a forward-proxy request names when it identifies the proxy itself, or nil.
+    def own_target_path: (Takagi::Message::Inbound request) -> String?
   end
 end

@@ -12,16 +12,13 @@ RSpec.describe 'Takagi::Proxy transport bridging (plan row 4)' do
   let(:stack) { Takagi::MiddlewareStack.instance }
   let(:codes) { Takagi::CoAP::Registries::Response }
 
-  before do
-    @previous_router = stack.router
+  around do |example|
     @router = Takagi::Router.new
     @router.get('/echo') do |req, _params|
       { seen_token: req.token.unpack1('H*'), seen_mid: req.message_id }
     end
-    stack.instance_variable_set(:@router, @router)
+    with_router(@router) { example.run }
   end
-
-  after { stack.instance_variable_set(:@router, @previous_router) }
 
   def with_server(klass)
     started = Queue.new

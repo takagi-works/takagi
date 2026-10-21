@@ -10,9 +10,15 @@ module Takagi
 
       def self.generate: (router: untyped, ?request: untyped?) -> untyped
 
+      def self.for_entries: (untyped entries) -> ::String
+
+      def self.split_entries: (untyped document) -> ::Array[::String]
+
       def initialize: (untyped router, untyped raw_query) -> void
 
       def generate: () -> untyped
+
+      def document: (untyped entries) -> ::String
 
       private
 

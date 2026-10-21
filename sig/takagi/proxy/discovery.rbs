@@ -1,9 +1,18 @@
 module Takagi
   class Proxy::Discovery
-    attr_reader route_table: untyped
+    WELL_KNOWN: String
+    CONTENT_FORMAT: Integer
+    CONTENT_FORMAT_OPTION: Integer
+    CONTENT: Integer
 
-    def initialize: (route_table: untyped) -> void
-    def aggregate: -> String
-    def local_routes: -> Array[untyped]
+    def initialize: (
+      route_table: Takagi::Proxy::RouteTable,
+      ?timeout: Numeric,
+      ?logger: untyped
+    ) -> void
+
+    # The answer for a `/.well-known/core` request, or nil when the proxy does not aggregate and the
+    # request is left to the local stack.
+    def answer: (Takagi::Message::Inbound request) -> Takagi::Message::Outbound?
   end
 end

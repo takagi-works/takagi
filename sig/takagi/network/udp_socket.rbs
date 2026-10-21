@@ -1,0 +1,11 @@
+module Takagi
+  module Network
+    module UdpSocket
+      def self.for: (untyped address) -> ::UDPSocket
+
+      def self.family_for: (untyped address) -> ::Integer
+
+      def self.unbracketed: (untyped address) -> ::String
+    end
+  end
+end

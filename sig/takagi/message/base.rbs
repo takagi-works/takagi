@@ -34,7 +34,9 @@ module Takagi
 
       attr_reader code: untyped
 
-      def initialize: (?untyped? data) -> void
+      attr_reader transport: Symbol
+
+      def initialize: (?untyped? data, ?transport: Symbol) -> void
 
       # Convert CoAP code number to method name using registry
       # @param code [Integer] CoAP code number

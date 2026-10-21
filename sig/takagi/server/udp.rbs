@@ -4,6 +4,8 @@ module Takagi
     class Udp
       @port: untyped
 
+      @bind_address: untyped
+
       @worker_processes: untyped
 
       @worker_threads: untyped
@@ -42,7 +44,7 @@ module Takagi
 
       def worker_pids: () -> untyped
 
-      def initialize: (?port: ::Integer, ?worker_processes: ::Integer, ?worker_threads: ::Integer, ?middleware_stack: untyped?, ?router: untyped?, ?logger: untyped?, ?watcher: untyped?) -> void
+      def initialize: (?port: ::Integer, ?worker_processes: ::Integer, ?worker_threads: ::Integer, ?middleware_stack: untyped?, ?router: untyped?, ?logger: untyped?, ?watcher: untyped?, ?bind_address: ::String) -> void
 
       # Starts the server with multiple worker processes
       def run!: () -> untyped
@@ -64,7 +66,7 @@ module Takagi
 
       def build_worker: () -> untyped
 
-      def worker_configuration: () -> { port: untyped, socket: untyped, middleware_stack: untyped, router: untyped, sender: untyped, logger: untyped, threads: untyped }
+      def worker_configuration: () -> { port: untyped, bind_address: untyped, socket: untyped, middleware_stack: untyped, router: untyped, sender: untyped, logger: untyped, threads: untyped }
 
       def close_socket: () -> untyped
     end

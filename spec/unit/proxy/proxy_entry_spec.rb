@@ -15,19 +15,13 @@ RSpec.describe 'Takagi::Proxy (plan row 10 entry point)' do
   let(:stack) { Takagi::MiddlewareStack.instance }
 
   # The middleware stack resolves every route through ITS OWN router at call time
-  # (`middleware_stack.rb:75`) and exposes no setter, so a router handed to the proxy is the one
-  # that serves only while the stack points at it too - the wiring
-  # spec/unit/controller_threads_spec.rb:49 already uses. The router itself is a throwaway and is
-  # restored afterwards, so the suite's global router is never left pointed elsewhere.
-  before do
-    @previous_router = stack.router
+  # (`middleware_stack.rb:75`), so a router handed to the proxy is the one that serves only while
+  # the stack points at it too. The throwaway router is installed for the example through the
+  # shared `with_router` helper (row 23), whose `ensure` restores the suite's global router.
+  around do |example|
     @router = Takagi::Router.new
     @router.get('/proxy/probe') { { message: 'answered locally' } }
-    stack.instance_variable_set(:@router, @router)
-  end
-
-  after do
-    stack.instance_variable_set(:@router, @previous_router)
+    with_router(@router) { example.run }
   end
 
   def exchange(protocol, port, path, timeout: 5)

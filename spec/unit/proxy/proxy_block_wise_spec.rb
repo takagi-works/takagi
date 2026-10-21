@@ -14,8 +14,7 @@ RSpec.describe 'Takagi::Proxy block-wise and Observe policy (plan row 7)' do
   let(:stack) { Takagi::MiddlewareStack.instance }
   let(:codes) { Takagi::CoAP::Registries::Response }
 
-  before do
-    @previous_router = stack.router
+  around do |example|
     @router = Takagi::Router.new
     @router.post('/upload') do |req, _params|
       body = req.payload.to_s
@@ -23,11 +22,15 @@ RSpec.describe 'Takagi::Proxy block-wise and Observe policy (plan row 7)' do
         option_numbers: req.options.keys.sort }
     end
     @router.get('/download') { { blob: 'x' * 3000 } }
-    @router.get('/obs') { { message: 'one shot' } }
-    stack.instance_variable_set(:@router, @router)
+    # The backend SUPPORTS Observe (RFC 7641): this is the route an Observe request would match if
+    # one ever reached this hop, and both handlers report back what they actually received - the
+    # way the upload route reports the options it saw.
+    @router.get('/obs') { |req, _params| { message: 'one shot', observing: req.options.key?(6) } }
+    @router.observable('/obs') do |req, _params|
+      { message: 'observable', observing: req.options.key?(6) }
+    end
+    with_router(@router) { example.run }
   end
-
-  after { stack.instance_variable_set(:@router, @previous_router) }
 
   def with_backend
     started = Queue.new
@@ -113,8 +116,27 @@ RSpec.describe 'Takagi::Proxy block-wise and Observe policy (plan row 7)' do
         response = Takagi::Client::Response.new(raw, transport: :udp)
         expect(response.code).to eq(codes::CONTENT)
         expect(response.options).to have_key(23)
+
+        # Option 23's PRESENCE survives any rewrite, so the pass-through claim needs its VALUE. The
+        # backend's own answer to the same request is the ground truth: a proxy that re-blocked the
+        # response would still carry option 23, and only the decoded NUM/M/SZX would differ.
+        backend_socket = UDPSocket.new
+        backend_socket.bind('127.0.0.1', 0)
+        backend_request = Takagi::Message::Request.new(
+          method: :get, uri: URI("coap://127.0.0.1:#{backend.bound_port}/download"),
+          token: SecureRandom.hex(4), options: { 23 => '' }
+        )
+        backend_socket.send(backend_request.to_bytes, 0, '127.0.0.1', backend.bound_port)
+        backend_raw, _backend_address = Timeout.timeout(8) { backend_socket.recvfrom(4096) }
+        backend_response = Takagi::Client::Response.new(backend_raw, transport: :udp)
+
+        forwarded = Takagi::CoAP::BlockWise::OptionValue.decode(response.options.fetch(23))
+        sent = Takagi::CoAP::BlockWise::OptionValue.decode(backend_response.options.fetch(23))
+        expect([forwarded.num, forwarded.more?, forwarded.szx])
+          .to eq([sent.num, sent.more?, sent.szx])
       ensure
         socket&.close
+        backend_socket&.close
       end
     end
   end
@@ -124,6 +146,8 @@ RSpec.describe 'Takagi::Proxy block-wise and Observe policy (plan row 7)' do
       with_proxy([route_to(backend, '/obs')]) do |proxy|
         socket = UDPSocket.new
         socket.bind('127.0.0.1', 0)
+        control = UDPSocket.new
+        control.bind('127.0.0.1', 0)
         request = Takagi::Message::Request.new(
           method: :get, uri: URI("coap://127.0.0.1:#{proxy.port(:udp)}/obs/obs"),
           token: SecureRandom.hex(4), options: { 6 => 0 }
@@ -135,9 +159,26 @@ RSpec.describe 'Takagi::Proxy block-wise and Observe policy (plan row 7)' do
         expect(response.code).to eq(codes::CONTENT)
         expect(response.options).not_to have_key(6)
 
+        # What the BACKEND saw, as reported by the backend itself: the forwarded request carried no
+        # Observe option, so no observation was opened on the next hop. A proxy that relays the
+        # subscription matches the OBSERVE route instead and answers from it ("observable").
+        expect(JSON.parse(response.payload)).to eq('message' => 'one shot', 'observing' => false)
+
+        # The backend now changes the resource and notifies its observers (RFC 7641 4.2). A control
+        # socket subscribed DIRECTLY to the backend receives that notification, which is what makes
+        # the silent client socket below the proxy's doing instead of a dead notification path.
+        Takagi::ObserveRegistry.subscribe('/obs', address: '127.0.0.1', port: control.addr[1],
+                                                token: 'row7-control')
+        Takagi::ObserveRegistry.notify('/obs', { message: 'changed' })
+        expect(control.wait_readable(5)).to be_truthy
+        control_raw, = control.recvfrom(4096)
+        expect(Takagi::Client::Response.new(control_raw, transport: :udp).code).to eq(codes::CONTENT)
+
         expect { Timeout.timeout(1) { socket.recvfrom(4096) } }.to raise_error(Timeout::Error)
       ensure
+        Takagi::ObserveRegistry.unsubscribe('/obs', 'row7-control')
         socket&.close
+        control&.close
       end
     end
   end

@@ -1,12 +1,92 @@
 module Takagi
-  class Proxy::RouteTable
-    attr_reader routes: Array[untyped]
-    attr_reader names: Array[String]
-    attr_reader forward: Symbol
+  class Proxy
+    # One prefix-to-backend mapping of the route table.
+    class Route
+      attr_reader prefix: String
+      attr_reader host: String
+      attr_reader port: Integer
+      attr_reader outbound: Symbol?
 
-    def initialize: (routes: Array[untyped], names: Array[String], ?forward: Symbol) -> void
-    def resolve: (String path) -> [untyped, String]?
-    def own_authority?: (String host, Integer port) -> bool
-    def register_own_ports: (Array[Integer]) -> void
+      def initialize: (prefix: String, host: String, port: Integer, ?outbound: Symbol?) -> void
+
+      # The number of path segments in the prefix; the longest match wins.
+      def depth: () -> Integer
+
+      # True when the prefix claims `path` (segment-aware, so `/sensor` does not capture `/sensors`).
+      def matches?: (String path) -> bool
+
+      # The path the backend sees: `path` with the prefix removed, always absolute.
+      def relative_path: (String path) -> String
+
+      def authority: () -> String
+      def to_s: () -> String
+
+      # Splits a URI path into its segments, discarding the empty ones.
+      def self.segments: (String path) -> Array[String]
+    end
+
+    # Longest-prefix route table: the reverse proxy's namespace-to-backend mapping (RFC 7252 5.7.3).
+    class RouteTable
+      # A successful lookup: the route that claimed the path plus the path left for its backend.
+      class Match
+        attr_accessor route: Route
+        attr_accessor relative_path: String
+
+        def backend: () -> Route
+        def host: () -> String
+        def port: () -> Integer
+        def outbound: () -> Symbol?
+        def to_s: () -> String
+      end
+
+      # A name the proxy answers to (RFC 7252 5.10.2): a host, optionally with its port.
+      class Name
+        attr_accessor host: String?
+        attr_accessor port: Integer?
+      end
+
+      TRANSPORTS: Array[Symbol]
+      PORT_RANGE: Range[Integer]
+
+      # The forward-proxy modes of RFC 7252 5.10.2.
+      FORWARD_MODES: Array[Symbol]
+
+      # What the proxy does with `/.well-known/core` (RFC 6690 4).
+      DISCOVERY_MODES: Array[Symbol]
+
+      attr_reader routes: Array[Route]
+      attr_reader names: Array[Name]
+      attr_reader own_ports: Array[Integer]
+      attr_reader forward: Symbol
+      attr_reader discovery: Symbol
+
+      # Builds the table from a process configuration's proxy section.
+      def self.from_config: (untyped config, ?own_ports: Array[Integer]?) -> RouteTable
+
+      def initialize: (
+        routes: Array[untyped],
+        ?names: Array[String],
+        ?forward: Symbol,
+        ?discovery: Symbol,
+        ?own_ports: Array[Integer]
+      ) -> void
+
+      # Resolves a URI path to the backend that owns it, longest prefix first.
+      def resolve: (String path) -> Match?
+
+      def prefixes: () -> Array[String]
+
+      # Whether this proxy will act as a forward proxy for `authority` ("host:port").
+      def serves_forward_proxy?: (String authority) -> bool
+
+      # The route whose backend authority is exactly `authority`, if any.
+      def route_for_authority: (String authority) -> Route?
+
+      # Whether `host:port` names the proxy itself (RFC 7252 5.10.2).
+      def own_authority?: (String host, Integer port) -> bool
+
+      # Records the ports this proxy actually bound.
+      def register_own_ports: (Array[Integer] ports) -> void
+    end
   end
 end

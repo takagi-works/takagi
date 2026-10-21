@@ -44,7 +44,7 @@ module Takagi
 
       def start_service_hooks!: () -> untyped
 
-      def initialize: (?port: ::Integer, ?worker_processes: ::Integer, ?worker_threads: ::Integer?, ?middleware_stack: untyped?, ?router: untyped?, ?logger: untyped?, ?watcher: untyped?, ?sender: untyped?, ?max_connections: ::Integer?) -> void
+      def initialize: (?port: ::Integer, ?worker_processes: ::Integer, ?worker_threads: ::Integer?, ?middleware_stack: untyped?, ?router: untyped?, ?logger: untyped?, ?watcher: untyped?, ?sender: untyped?, ?max_connections: ::Integer?, ?bind_address: ::String) -> void
 
       def run!: () -> untyped
 
