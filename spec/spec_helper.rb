@@ -9,7 +9,7 @@ SimpleCov.start do
   add_group 'Server', 'lib/takagi/server'
   add_group 'Message', 'lib/takagi/message'
   add_group 'Network', 'lib/takagi/network'
-  add_group 'EventBus', 'lib/takagi/event_bus'
+  add_group 'Bus', 'lib/takagi/bus'
   add_group 'Observer', 'lib/takagi/observer'
   add_group 'Observable', 'lib/takagi/observable'
   add_group 'Controllers', 'lib/takagi/controller'

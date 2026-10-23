@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Takagi::EventBus::ObserverCleanup do
+RSpec.describe Takagi::Bus::ObserverCleanup do
   describe '#initialize' do
     it 'creates cleanup with default settings' do
       cleanup = described_class.new

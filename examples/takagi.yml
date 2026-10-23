@@ -10,11 +10,26 @@ bind_address: "0.0.0.0"  # Bind to all interfaces (default)
                           # Use specific IP for single interface
 server_name: "Takagi CoAP Server"
 
-# Number of processes (for multi-process mode)
+# Worker processes. A server-wide DEFAULT, consumed by UDP only: a protocol
+# forks workers from its own `protocol_settings` count below.
 processes: 1
 
-# Number of threads per process
+# Threads per serving process. UDP readers take this value; the TCP handler
+# pool opens only on `protocol_settings: { tcp: { threads: N } }` below.
 threads: 4
+
+# Accepted-connection cap per TCP worker (`worker_processes x this` is the
+# server ceiling). UDP has no accepted-connection notion.
+max_connections: 100
+
+# Per-protocol overrides: a written key wins for its own transport.
+protocol_settings:
+  udp:
+    processes: 1
+  tcp:
+    processes: 2         # 2 forked TCP workers behind one port
+    threads: 4           # bounded handler pool, per worker
+    max_connections: 50  # per worker
 
 # Supported protocols
 protocols:
@@ -41,32 +56,21 @@ observability:
 # EventBus Configuration
 # ============================================
 event_bus:
-  # Worker pool size for async message delivery
-  # Higher values = more concurrent message processing
-  # Lower values = less memory/CPU usage
-  ractors: 10
+  # Threads that run subscribers registered with `async: true`.
+  # Each subscriber still receives its messages in publication order.
+  async_threads: 10
 
-  # Current state cache (LRUCache)
-  # Stores latest value per address for fast lookups
-  state_cache_size: 1000   # Max number of addresses
-  state_cache_ttl: 3600    # Seconds (1 hour)
+  # Per-subscriber backlog bound. A post that would exceed it is refused and logged.
+  async_backlog_limit: 1024
 
   # Observer cleanup settings
-  # Removes stale CoAP observers periodically
+  # Removes stale CoAP observers periodically (read by Observer::Registry)
   cleanup_interval: 60     # Seconds between cleanup runs
   max_observer_age: 600    # Seconds (10 minutes)
 
-  # ==========================================
-  # Message Buffering (for reliability)
-  # ==========================================
-  # Enable to buffer messages for late subscribers and reconnections
-  # Recommended for unreliable networks (WiFi, mesh, mobile)
-
-  message_buffering_enabled: false  # Set to true to enable
-
-  # When enabled:
-  message_buffer_max_messages: 100  # Messages per address
-  message_buffer_ttl: 300           # Seconds (5 minutes)
+  # NOTE: the bus keeps no event state and offers no buffering.
+  # Old keys (ractors, state_cache_size, state_cache_ttl, message_buffering_enabled,
+  # message_buffer_max_messages, message_buffer_ttl) now raise an ArgumentError on load.
 
 # ============================================
 # Router Configuration

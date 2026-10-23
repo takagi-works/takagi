@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Takagi
-  class EventBus
+  class Bus
     # Thread-safe LRU cache with TTL (pure Ruby)
     # Zero runtime dependencies
     #

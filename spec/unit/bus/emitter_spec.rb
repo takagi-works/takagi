@@ -34,7 +34,7 @@ RSpec.describe Takagi::Observable::Emitter do
 
   it 'subscribes locally and forwards a transformed value to an observer' do
     received = observe
-    expect(Takagi::EventBus::CoAPBridge).not_to receive(:subscribe_remote)
+    expect(Takagi::Bus::CoAPBridge).not_to receive(:subscribe_remote)
 
     subscribe(described_class.new(path)) do |event|
       { temp: event.body[:celsius] * 2, at: event.timestamp }

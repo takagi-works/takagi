@@ -6,8 +6,8 @@ require 'spec_helper'
 RSpec.describe 'Takagi RFC 6690 Resource Discovery' do
   before(:all) do
     # Clear any observable resources registered by other tests (EventBus CoAP bridge)
-    if defined?(Takagi::EventBus::CoAPBridge)
-      Takagi::EventBus::CoAPBridge.clear
+    if defined?(Takagi::Bus::CoAPBridge)
+      Takagi::Bus::CoAPBridge.clear
 
       # Also remove the routes from the global router that were added by CoAPBridge
       router = Takagi::Base.router

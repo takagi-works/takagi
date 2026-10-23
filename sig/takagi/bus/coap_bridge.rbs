@@ -3,7 +3,7 @@ module Takagi
     # CoAP Observe integration - maps events to CoAP resources
     # Thread-safe with Mutex for resource registration
     #
-    # Maps EventBus addresses to CoAP observable resources:
+    # Maps Bus addresses to CoAP observable resources:
     # - "sensor.temperature.room1" -> "/events/sensor/temperature/room1"
     #
     # @example

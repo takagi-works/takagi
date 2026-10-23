@@ -96,7 +96,7 @@ RSpec.describe 'the hook contract external plugins depend on (plan row 14)' do
 
     child_pid = fork do
       reader.close
-      Takagi::EventBus.shutdown
+      Takagi::Bus.shutdown
       child_seen = Queue.new
       Takagi::Hooks.subscribe(:contract_fork_probe) { |payload| child_seen << payload }
       Takagi::Hooks.emit(:contract_fork_probe, value: 99)

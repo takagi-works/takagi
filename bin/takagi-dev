@@ -85,13 +85,12 @@ when 'routes', 'r'
   puts
 
   router = app_class.router
-  routes = router.instance_variable_get(:@routes)
+  routes = router.route_entries
 
   if routes.empty?
     puts Takagi::Branding.info('No routes registered')
   else
-    # Group routes by method
-    grouped = routes.values.group_by(&:method).sort_by { |method, _| method }
+    grouped = routes.group_by(&:method).sort_by { |method, _| method }
 
     grouped.each do |method, entries|
       entries.each do |entry|

@@ -3,7 +3,7 @@
 
 require_relative "../lib/takagi"
 
-# Simple test app demonstrating DX improvements
+# Demo server app (not a test runner); run it, then query it with bin/takagi-client
 class TestApp < Takagi::Base
   # Example 1: Using helper methods with inline core metadata
   get "/users/:id" do

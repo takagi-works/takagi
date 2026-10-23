@@ -4,7 +4,7 @@
 # from the `event_bus/*` files that `event_bus.rb` loads. A CoAP registry class body emits a hook during
 # Zeitwerk eager_load (`lib/takagi/coap/registries/method.rb`), i.e. before either file has been autoloaded,
 # so the bus load contract is pulled in here rather than left to the call site.
-require_relative 'event_bus'
+require_relative 'bus'
 
 module Takagi
   # Lightweight hook dispatcher used by the plugin system to observe internal events.

@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Takagi::EventBus::LRUCache do
+RSpec.describe Takagi::Bus::LRUCache do
   describe '#initialize' do
     it 'creates cache with default settings' do
       cache = described_class.new

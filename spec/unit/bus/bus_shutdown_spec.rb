@@ -43,7 +43,7 @@ RSpec.describe 'Takagi::Bus shutdown recovery' do
     bus.publish('warm.up', { seq: 0 })
 
     dead_executor = bus.executor
-    expect(dead_executor).to be_a(Takagi::EventBus::AsyncExecutor::ThreadExecutor)
+    expect(dead_executor).to be_a(Takagi::Bus::AsyncExecutor::ThreadExecutor)
     expect(dead_executor.running?).to be(true)
 
     bus.shutdown
@@ -58,7 +58,7 @@ RSpec.describe 'Takagi::Bus shutdown recovery' do
     expect(Timeout.timeout(5) { received.pop }).to eq(1)
 
     rebuilt = bus.executor
-    expect(rebuilt).to be_a(Takagi::EventBus::AsyncExecutor::ThreadExecutor)
+    expect(rebuilt).to be_a(Takagi::Bus::AsyncExecutor::ThreadExecutor)
     expect(rebuilt).not_to equal(dead_executor)
     expect(rebuilt.running?).to be(true)
   end

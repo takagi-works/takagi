@@ -173,7 +173,7 @@ Subscribe with `Takagi::Hooks.on(:hook) { |p| ... }`, emit with `Takagi::Hooks.e
 - `:plugin_enabling` — keys: `name`, `metadata`, `options`.  
   Example: `Takagi::Hooks.on(:plugin_enabling) { |p| audit("enable #{p[:name]}", p[:options]) }`
 - `:plugin_enabled` — keys: `name`, `metadata`.  
-  Example: `Takagi::Hooks.on(:plugin_enabled) { |p| EventBus.publish('plugin.started', p) if defined?(EventBus) }`
+  Example: `Takagi::Hooks.on(:plugin_enabled) { |p| Takagi::Bus.publish('plugin.started', p) }`
 - `:plugin_disabling` — keys: `name`, `metadata`.  
   Example: `Takagi::Hooks.on(:plugin_disabling) { |p| audit("disable #{p[:name]}") }`
 - `:plugin_disabled` — keys: `name`, `metadata`.  

@@ -1,3 +1,117 @@
+## [2.0.0] - 2026-10-22
+
+### Version 2.0 - "Domin"
+
+> *"When the workers rise, give them a supervisor."*
+
+Eleven commits and 19 000+ lines later, Takagi is a framework with a control plane.
+A CoAP **proxy** (reverse and forward), **block-wise transfer** (RFC 7959), a
+**cluster** that supervises one worker count per service, and a **Bus** with local
+hooks all landed. The release is named after R.U.R.'s Domin, who ran the works -
+because this one is mostly about coordinating them.
+
+This is a major release because the public API is **not** unchanged, for the first
+time since 1.0: the EventBus scope model is gone, the `Takagi::EventBus` alias is
+removed, and seven `event_bus` configuration keys now refuse to load. All three
+are deliberate, and all three are loud.
+
+### Breaking changes
+
+- **The EventBus scope model is removed.** `Takagi::EventBus::Scope` (and its
+  `LOCAL` / `CLUSTER` / `GLOBAL` values) is deleted, as is
+  `Takagi::EventBus.address_prefix`. The bus delivers locally and keeps no
+  per-message scope: `scope: :local` is accepted, and **any other scope raises
+  `ArgumentError`** rather than silently delivering less than it promised.
+- **Seven `event_bus` configuration keys now refuse to load.** A key with no
+  consumer left to honour it is rejected at boot instead of being ignored, so a
+  `takagi.yml` entry can never quietly do nothing:
+
+  | Removed key | Why |
+  |---|---|
+  | `ractors` | Ractor-based delivery was deleted; the local bus delivers on threads |
+  | `process_pool_size` | process-based delivery was deleted; the local bus delivers on threads |
+  | `state_cache_size` | the bus no longer retains per-address state |
+  | `state_cache_ttl` | the bus no longer retains per-address state |
+  | `message_buffering_enabled` | bus message buffering was removed |
+  | `message_buffer_max_messages` | bus message buffering was removed |
+  | `message_buffer_ttl` | bus message buffering was removed |
+
+  The error names every offending key together with its reason, so one boot tells
+  you everything to delete.
+- **The `Takagi::EventBus` alias is removed.** `EventBus` was a deprecated alias of
+  `Bus`, and it is gone now rather than in a later major, so `Takagi::EventBus`,
+  `EventBus.publish` and `EventBus::Message` all raise `NameError`. Rename them to
+  `Bus`, `Bus.publish` and `Bus::Message` - the constants are otherwise unchanged.
+  Its submodules (`Future`, `LRUCache`, `AsyncExecutor`, `CoAPBridge`,
+  `ObserverCleanup`, `MessageBuffer`, `Message`) live on `Takagi::Bus` and were
+  always the same objects.
+
+### New features
+
+- **Proxy** (RFC 7252 §5.7, §5.10): reverse proxying by prefix route and forward
+  proxying by `Proxy-Uri` / `Proxy-Scheme`, with per-route transport switching so a
+  UDP device can reach a TCP backend, `discovery: :local` or `:aggregate`, a names
+  list that keeps the proxy's own authority local, and the RFC's own refusal codes
+  (5.05, 5.04, 4.02) instead of guessed ones.
+- **Block-wise transfer** (RFC 7959): the `BlockWise` middleware assembles Block1
+  request bodies and slices Block2 responses, both invisible to route handlers,
+  bounded by `block_wise.{enabled, szx, max_assembled_bytes, assembly_ttl,
+  max_concurrent_assemblies}`.
+- **Per-route `blockwise` declaration**, a sibling of `core`:
+
+  ```ruby
+  get '/metrics' do
+    core do
+      title 'Environment Metrics'
+      sz 256
+    end
+
+    blockwise do
+      szx 4
+      max_bytes 8192
+    end
+
+    { temp: 21.4 }
+  end
+  ```
+
+  Declaring the block is the opt-in, so a route can turn block-wise on against a
+  globally disabled feature; `enabled false` inside it turns it back off, and a
+  route that declares nothing stays governed by the global setting alone.
+- **Cluster**: one worker count per service, with the master binding every socket
+  once before it forks, so each child inherits all of them.
+- **Bus**: `publish`, `send`, `send_sync`, `send_async`, `consumer`, and
+  `subscribe_remote`, with local hooks.
+- **IPv6 over UDP**: a socket's address family now follows its address literal,
+  so `[::1]` and `::` work.
+- **`bind_address` is honoured.** It was parsed, defaulted and documented, but
+  consumed by nothing - both transports hardcoded `0.0.0.0`, so setting it to
+  `127.0.0.1` produced a server on every interface. It now binds what you ask.
+
+### Documentation & examples
+
+- **`CONFIGURATION.md`** added: one reference for server, block-wise, proxy,
+  EventBus and middleware settings, including the per-route `blockwise` block.
+
+### Internals
+
+- Spec files grew from 42 to 81, and `sig/` gained 770 lines against 497 removed,
+  as the proxy, block-wise, cluster and bus surfaces were typed.
+
+### Migration cheatsheet (1.x → 2.0)
+
+| 1.x | 2.0 |
+|---|---|
+| `EventBus.send_sync(addr, body, scope: :local)` | works unchanged - `:local` is the only accepted scope |
+| `EventBus.send_sync(addr, body, scope: :cluster)` | raises `ArgumentError`; the bus delivers locally only |
+| `EventBus::Scope::LOCAL` | constant gone; pass the symbol `:local` instead |
+| `EventBus.address_prefix` | gone, with no replacement |
+| `event_bus: { ractors: 4 }` (or any key above) | delete the key; boot now refuses it by name |
+| `Takagi::EventBus` | **removed** - use `Takagi::Bus` |
+| `EventBus::Message` / `::Future` / `::AsyncExecutor` | `Bus::Message` / `::Future` / `::AsyncExecutor` (same classes) |
+| `App.get('/foo') { ... }` | unchanged |
+
+
 ## [1.1.0] - 2026-06-12
 
 ### Version 1.1 - "Radius"
@@ -103,8 +217,8 @@ In particular — and this is the part the original draft got wrong:
 - `docs/FIRST_PLUGIN_GUIDE.md` — write your first plugin in 10
   minutes
 - `docs/HOOKS.md` — event reference
-- `examples/cloud_gateway_app.rb` — full plugin composition
-- `examples/nested_api_app.rb` — plugins depending on other plugins
+- `examples/cloud_gateway_app.rb` — modular Controllers + `Takagi::Application`
+- `examples/nested_api_app.rb` — nested controller mounting (not plugins)
 - `examples/simple_device_app.rb` — observable + core endpoints
 - `examples/client_lifecycle_example.rb` — new client API
   end-to-end

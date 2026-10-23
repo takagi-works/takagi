@@ -20,7 +20,7 @@ module Takagi
 
   loader = Zeitwerk::Loader.for_gem
   # Configure inflector for CoAP (Constrained Application Protocol),
-  # CBOR (Concise Binary Object Representation), and EventBus utilities
+  # CBOR (Concise Binary Object Representation), and Bus utilities
   loader.inflector.inflect(
     'coap' => 'CoAP',
     'cbor' => 'CBOR',

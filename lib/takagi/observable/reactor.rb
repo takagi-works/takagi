@@ -271,7 +271,7 @@ module Takagi
       # @yield [emitter] Block that sets up event listeners
       # @return [void]
       #
-      # @example EventBus-driven
+      # @example Bus-driven
       #   observable '/alerts' do |emitter|
       #     emitter.on_event('alert.critical')
       #   end

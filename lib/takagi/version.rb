@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
 module Takagi
-  VERSION = '1.1.0'
-  NAME = 'Radius'
+  VERSION = '2.0.0'
+  NAME = 'Domin'
 end

@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Takagi::EventBus::Future do
+RSpec.describe Takagi::Bus::Future do
   describe '#set_value' do
     it 'sets the value successfully' do
       future = described_class.new

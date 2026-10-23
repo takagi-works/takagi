@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Takagi
-  class EventBus
+  class Bus
     # Background thread for stale observer cleanup
     #
     # Periodically cleans up stale observers from the ObserveRegistry.

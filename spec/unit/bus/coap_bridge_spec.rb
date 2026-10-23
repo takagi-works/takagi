@@ -3,7 +3,7 @@
 require 'spec_helper'
 require 'timeout'
 
-RSpec.describe Takagi::EventBus::CoAPBridge do
+RSpec.describe Takagi::Bus::CoAPBridge do
   let(:app) do
     Class.new do
       attr_reader :observables
@@ -235,7 +235,7 @@ RSpec.describe Takagi::EventBus::CoAPBridge do
 
   describe '.publish_to_observers' do
     it 'notifies ObserveRegistry with the built payload' do
-      message = Takagi::EventBus::Message.new('sensor.temp.room1', { value: 25.5 })
+      message = Takagi::Bus::Message.new('sensor.temp.room1', { value: 25.5 })
 
       expect(Takagi::ObserveRegistry).to receive(:notify).with(
         '/events/sensor/temp/room1',
@@ -246,7 +246,7 @@ RSpec.describe Takagi::EventBus::CoAPBridge do
     end
 
     it 'logs and swallows a notification failure without touching bus state' do
-      message = Takagi::EventBus::Message.new('sensor.temp.room1', { value: 25.5 })
+      message = Takagi::Bus::Message.new('sensor.temp.room1', { value: 25.5 })
       allow(Takagi::ObserveRegistry).to receive(:notify).and_raise(StandardError, 'registry down')
       expect(Takagi.logger).to receive(:error).with(/Error publishing to observers/)
 

@@ -3,7 +3,7 @@
 require 'timeout'
 
 module Takagi
-  class EventBus
+  class Bus
     # Future for sync/async request-reply pattern (pure Ruby)
     # Uses ConditionVariable for efficient waiting
     #

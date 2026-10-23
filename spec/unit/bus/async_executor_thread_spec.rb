@@ -17,7 +17,7 @@ class AsyncExecutorSpecHandler
   end
 end
 
-RSpec.describe Takagi::EventBus::AsyncExecutor::ThreadExecutor do
+RSpec.describe Takagi::Bus::AsyncExecutor::ThreadExecutor do
   let(:executor) { described_class.new(size: 2) }
   let(:release) { Queue.new }
 

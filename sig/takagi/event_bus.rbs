@@ -1,9 +1,0 @@
-module Takagi
-  # Deprecated alias for {Bus}: `EventBus = Bus` (`lib/takagi/event_bus.rb`).
-  #
-  # The class-level API, `EventBus::Message` and `EventBus::Handler` all resolve to {Bus} at
-  # runtime. The nested modules that hang off the same class (`AsyncExecutor`, `LRUCache`,
-  # `MessageBuffer`, `Future`, `CoAPBridge`, `ObserverCleanup`) are declared under {Bus} in the
-  # sibling signature files, matching where they live at runtime.
-  EventBus: singleton(Bus)
-end

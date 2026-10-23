@@ -2,10 +2,10 @@
 
 require 'spec_helper'
 
-RSpec.describe Takagi::EventBus::MessageBuffer do
-  let(:message1) { Takagi::EventBus::Message.new('sensor.temp', { value: 20 }) }
-  let(:message2) { Takagi::EventBus::Message.new('sensor.temp', { value: 21 }) }
-  let(:message3) { Takagi::EventBus::Message.new('sensor.temp', { value: 22 }) }
+RSpec.describe Takagi::Bus::MessageBuffer do
+  let(:message1) { Takagi::Bus::Message.new('sensor.temp', { value: 20 }) }
+  let(:message2) { Takagi::Bus::Message.new('sensor.temp', { value: 21 }) }
+  let(:message3) { Takagi::Bus::Message.new('sensor.temp', { value: 22 }) }
 
   after do
     # Ensure cleanup threads are stopped
@@ -86,7 +86,7 @@ RSpec.describe Takagi::EventBus::MessageBuffer do
       buffer = described_class.new(max_messages: 3, ttl: 300)
 
       4.times do |i|
-        msg = Takagi::EventBus::Message.new('sensor.temp', { value: i })
+        msg = Takagi::Bus::Message.new('sensor.temp', { value: i })
         buffer.store('sensor.temp', msg)
       end
 
@@ -100,8 +100,8 @@ RSpec.describe Takagi::EventBus::MessageBuffer do
     it 'maintains separate buffers per address' do
       buffer = described_class.new(max_messages: 2, ttl: 300)
 
-      buffer.store('sensor.temp.room1', Takagi::EventBus::Message.new('sensor.temp.room1', { room: 1 }))
-      buffer.store('sensor.temp.room2', Takagi::EventBus::Message.new('sensor.temp.room2', { room: 2 }))
+      buffer.store('sensor.temp.room1', Takagi::Bus::Message.new('sensor.temp.room1', { room: 1 }))
+      buffer.store('sensor.temp.room2', Takagi::Bus::Message.new('sensor.temp.room2', { room: 2 }))
 
       room1_messages = buffer.replay('sensor.temp.room1')
       room2_messages = buffer.replay('sensor.temp.room2')
@@ -213,8 +213,8 @@ RSpec.describe Takagi::EventBus::MessageBuffer do
     it 'returns total messages across all addresses' do
       buffer = described_class.new
 
-      buffer.store('sensor.temp.room1', Takagi::EventBus::Message.new('sensor.temp.room1', { room: 1 }))
-      buffer.store('sensor.temp.room2', Takagi::EventBus::Message.new('sensor.temp.room2', { room: 2 }))
+      buffer.store('sensor.temp.room1', Takagi::Bus::Message.new('sensor.temp.room1', { room: 1 }))
+      buffer.store('sensor.temp.room2', Takagi::Bus::Message.new('sensor.temp.room2', { room: 2 }))
 
       expect(buffer.total_size).to eq(2)
       buffer.shutdown
@@ -240,8 +240,8 @@ RSpec.describe Takagi::EventBus::MessageBuffer do
     it 'clears all buffers' do
       buffer = described_class.new
 
-      buffer.store('sensor.temp.room1', Takagi::EventBus::Message.new('sensor.temp.room1', { room: 1 }))
-      buffer.store('sensor.temp.room2', Takagi::EventBus::Message.new('sensor.temp.room2', { room: 2 }))
+      buffer.store('sensor.temp.room1', Takagi::Bus::Message.new('sensor.temp.room1', { room: 1 }))
+      buffer.store('sensor.temp.room2', Takagi::Bus::Message.new('sensor.temp.room2', { room: 2 }))
 
       buffer.clear_all
 
@@ -270,7 +270,7 @@ RSpec.describe Takagi::EventBus::MessageBuffer do
       buffer = described_class.new(max_messages: 100, ttl: 300)
 
       buffer.store('sensor.temp', message1)
-      buffer.store('sensor.humidity', Takagi::EventBus::Message.new('sensor.humidity', { value: 60 }))
+      buffer.store('sensor.humidity', Takagi::Bus::Message.new('sensor.humidity', { value: 60 }))
 
       stats = buffer.stats
       expect(stats[:enabled]).to be true
@@ -336,7 +336,7 @@ RSpec.describe Takagi::EventBus::MessageBuffer do
       5.times do |i|
         threads << Thread.new do
           10.times do |j|
-            msg = Takagi::EventBus::Message.new("sensor.temp.#{i}", { value: j })
+            msg = Takagi::Bus::Message.new("sensor.temp.#{i}", { value: j })
             buffer.store("sensor.temp.#{i}", msg)
           end
         end
@@ -358,7 +358,7 @@ RSpec.describe Takagi::EventBus::MessageBuffer do
       # Writer thread
       threads << Thread.new do
         10.times do |i|
-          msg = Takagi::EventBus::Message.new('sensor.temp', { value: i })
+          msg = Takagi::Bus::Message.new('sensor.temp', { value: i })
           buffer.store('sensor.temp', msg)
           sleep 0.01
         end

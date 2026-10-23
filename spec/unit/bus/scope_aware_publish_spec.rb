@@ -2,7 +2,7 @@
 
 require 'spec_helper'
 
-RSpec.describe Takagi::EventBus, 'local publishing' do
+RSpec.describe Takagi::Bus, 'local publishing' do
   let(:event_bus) { described_class }
 
   # Deliberately no process-wide teardown hook: `described_class` IS the shared

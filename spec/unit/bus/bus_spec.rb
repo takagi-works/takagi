@@ -99,11 +99,8 @@ RSpec.describe Takagi::Bus do
     described_class.default.unregister(default_id)
   end
 
-  it 'exposes one process default behind the deprecated EventBus alias' do
+  it 'exposes one process default through Takagi.bus' do
     expect(described_class.default).to equal(described_class.default)
     expect(Takagi.bus).to equal(described_class.default)
-    expect(Takagi::EventBus).to equal(described_class)
-    expect(Takagi::EventBus::Message).to equal(described_class::Message)
-    expect(Takagi::EventBus::Handler).to equal(described_class::Handler)
   end
 end

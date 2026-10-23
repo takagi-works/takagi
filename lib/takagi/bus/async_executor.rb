@@ -3,7 +3,7 @@
 require 'io/wait'
 
 module Takagi
-  class EventBus
+  class Bus
     module AsyncExecutor
       # Thread-based executor that keeps each subscriber ordered.
       #
@@ -154,7 +154,7 @@ module Takagi
         end
 
         def log_refusal(handler)
-          message = "EventBus async backlog full (#{@backlog_limit}) for subscriber " \
+          message = "Bus async backlog full (#{@backlog_limit}) for subscriber " \
                     "#{handler.address} (#{handler.consumer_id}); message refused"
           if defined?(Takagi.logger)
             Takagi.logger.warn(message)

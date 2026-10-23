@@ -9,7 +9,7 @@ module Takagi
   #
   # The new Observable::Reactor provides:
   # - Thread pool support for parallel execution
-  # - Event-driven notifications via EventBus
+  # - Event-driven notifications via Bus
   # - Hybrid polling + push modes
   # - Better resource management
   #

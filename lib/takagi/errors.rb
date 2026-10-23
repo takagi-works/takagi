@@ -243,7 +243,7 @@ module Takagi
           suggestions: [
             "Each path can only have one observable definition",
             "Use different paths for different data streams",
-            "Or use EventBus.publish to send different events to same path"
+            "Or use Bus.publish to send different events to same path"
           ]
         )
       end

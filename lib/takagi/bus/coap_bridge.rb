@@ -3,11 +3,11 @@
 require 'set'
 
 module Takagi
-  class EventBus
+  class Bus
     # CoAP Observe integration - maps events to CoAP resources
     # Thread-safe with Mutex for resource registration
     #
-    # Maps EventBus addresses to CoAP observable resources:
+    # Maps Bus addresses to CoAP observable resources:
     # - "sensor.temperature.room1" -> "/events/sensor/temperature/room1"
     #
     # @example
@@ -88,10 +88,10 @@ module Takagi
         # Notifies all observers subscribed via CoAP Observe
         #
         # @param address [String] Event address
-        # @param message [EventBus::Message] Event message
+        # @param message [Bus::Message] Event message
         #
         # @example
-        #   message = EventBus::Message.new('sensor.temp.room1', { value: 25.5 })
+        #   message = Bus::Message.new('sensor.temp.room1', { value: 25.5 })
         #   CoAPBridge.publish_to_observers('sensor.temp.room1', message)
         def publish_to_observers(address, message)
           path = address_to_path(address)
@@ -129,7 +129,7 @@ module Takagi
         def subscribe_remote(address, node_url)
           raise NotImplementedError,
                 "CoAPBridge.subscribe_remote(#{address.inspect}, #{node_url.inspect}) is not implemented; " \
-                'remote CoAP Observe subscriptions to EventBus addresses are planned but unavailable'
+                'remote CoAP Observe subscriptions to Bus addresses are planned but unavailable'
         end
 
         # Check if resource is registered

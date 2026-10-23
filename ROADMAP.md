@@ -10,10 +10,10 @@
 - [x] **Basic support for URL ID parameters & payloads.**
 - [x] **Logging and debugging for easier development.**
 - [ ] **Sequel support for seamless storing data from CoAP**
-- [ ] **Better error handling & stability improvements.**
+- [x] **Better error handling & stability improvements.** — lib/takagi/errors.rb
 - [ ] **Extended routing DSL (e.g., wildcards).**
-- [ ] **Tests and RFC compatibility checks.**
-- [ ] **Push Notifications (Observe)** 
+- [x] **Tests and RFC compatibility checks.** — spec/rfc/
+- [x] **Push Notifications (Observe)** — lib/takagi/observe_registry.rb 
 
 ---
 

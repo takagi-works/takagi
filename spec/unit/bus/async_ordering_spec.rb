@@ -14,7 +14,7 @@ require 'timeout'
 #
 # Reproduces the pre-row-3 executor byte-for-behaviour: one shared queue, N
 # drainers, no per-handler affinity, as it stood in
-# lib/takagi/event_bus/async_executor.rb md5 7bdb9fccd1322952df15dde65099a346.
+# lib/takagi/bus/async_executor.rb md5 7bdb9fccd1322952df15dde65099a346.
 class LegacyPoolDrainer
   def initialize(size:)
     @size = size.positive? ? size : 1
@@ -115,7 +115,7 @@ RSpec.describe 'Takagi::Bus asynchronous subscriber ordering' do
   end
 
   def executor_class
-    ENV['TAKAGI_LEGACY_EXECUTOR'] ? LegacyPoolDrainer : Takagi::EventBus::AsyncExecutor::ThreadExecutor
+    ENV['TAKAGI_LEGACY_EXECUTOR'] ? LegacyPoolDrainer : Takagi::Bus::AsyncExecutor::ThreadExecutor
   end
 
   def install_executor(bus)
@@ -192,6 +192,6 @@ RSpec.describe 'Takagi::Bus asynchronous subscriber ordering' do
 
     bus.consumer('lazy.async', async: true) { |_msg| :ok }
     publish(bus, 'lazy.async', 1)
-    expect(bus.executor).to be_a(Takagi::EventBus::AsyncExecutor::ThreadExecutor)
+    expect(bus.executor).to be_a(Takagi::Bus::AsyncExecutor::ThreadExecutor)
   end
 end

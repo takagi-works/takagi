@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Takagi
-  class EventBus
+  class Bus
     # Bounded message buffer for distributed addresses
     # Stores recent messages in a ring buffer per address for replay on reconnection
     #

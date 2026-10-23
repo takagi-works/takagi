@@ -102,7 +102,7 @@ module Takagi
         # expire the same subscriptions.
         def start_cleanup
           @cleanup_mutex.synchronize do
-            @cleanup ||= EventBus::ObserverCleanup.new(
+            @cleanup ||= Bus::ObserverCleanup.new(
               interval: event_bus_setting(:cleanup_interval, 'EVENTBUS_CLEANUP_INTERVAL', 60),
               max_age: event_bus_setting(:max_observer_age, 'EVENTBUS_MAX_OBSERVER_AGE', 600)
             )

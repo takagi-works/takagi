@@ -14,3 +14,7 @@ gem 'simplecov', '~> 0.22', require: false
 gem 'rubocop', '~> 1.21'
 
 gem 'steep', '~> 1.9'
+
+group :development do
+  gem 'yard'
+end

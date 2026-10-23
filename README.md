@@ -11,7 +11,9 @@ It provides a lightweight way to build **CoAP APIs**, handle **IoT messaging**, 
 🔹 **Minimalistic DSL** – Define CoAP endpoints just like in Sinatra.  
 🔹 **CoRE discovery helpers** – Configure link-format metadata inline or at boot.  
 🔹 **Efficient and fast** – Runs over UDP, ideal for IoT applications.  
-🔹 **Reliable transport** – Supports CoAP over TCP (RFC 8323).
+🔹 **Reliable transport** – Supports CoAP over TCP (RFC 8323).  
+🔹 **Built-in proxy** – Reverse and forward proxy with transport switching.  
+🔹 **Unified cluster** – One worker count for all transports with supervised processes.
 
 ## Why "Takagi"?
 The name **Takagi** is inspired by **Riyoko Takagi**, as a nod to the naming convention of Sinatra.
@@ -89,6 +91,48 @@ SensorAPI.run!
 # SensorAPI.run!(protocols: [:udp, :tcp])
 ```
 🔥 **Boom! You just built a CoAP API in Ruby.**
+
+### **Deploy behind a proxy**
+
+When you have multiple backends (one per controller or service), use the built-in CoAP proxy to expose them at a single address:
+
+```yaml
+# proxy.yml
+port: 5683
+protocols: [udp, tcp]
+
+proxy:
+  enabled: true
+  routes:
+    - prefix: /sensors
+      host: 192.168.1.10
+      port: 5683
+    - prefix: /management
+      host: 192.168.1.11
+      port: 5683
+      outbound: tcp
+  names:
+    - proxy.example.com
+    - 192.168.1.1
+  discovery: aggregate
+  forward: configured
+```
+
+```ruby
+require 'takagi'
+
+Takagi.config.load_file('proxy.yml')
+
+table = Takagi::Proxy::RouteTable.from_config(Takagi.config)
+proxy = Takagi::Proxy.new(route_table: table,
+                          port: Takagi.config.port,
+                          protocols: Takagi.config.protocols)
+
+Takagi.logger.info "proxy listening: UDP #{proxy.port(:udp)}, TCP #{proxy.port(:tcp)}"
+proxy.run!
+```
+
+The proxy supports reverse-proxy (prefix-to-backend routes), forward-proxy (Proxy-Uri/Proxy-Scheme), and transport switching per route so a UDP device can reach a TCP backend. See `CONFIGURATION.md` for the full proxy guide.
 
 ### **Configure CoRE discovery metadata**
 
@@ -506,8 +550,32 @@ For quick testing, you can also use the standard CoAP command-line tools:
 ```sh
 coap-client -m get coap://localhost:5683/sensor/1
 ```
+
 ```sh
 coap-client -m post coap://localhost:5683/sensor -e '{"value":42}'
+```
+
+---
+
+## Configuration
+
+Takagi supports flexible configuration through YAML files, environment variables, and programmatic API. Configuration is applied in priority order: **YAML config** > **ENV variables** > **defaults**.
+
+For the full configuration guide—including server settings (port, processes, threads, protocols), block-wise transfer tuning, EventBus tuning, proxy setup, and deployment profiles—see **`CONFIGURATION.md`**.
+
+Quick preview:
+
+```yaml
+# takagi.yml
+port: 5683
+processes: 4          # OS worker processes for the whole service
+threads: 4            # Threads per process
+protocols: [udp, tcp]
+
+block_wise:
+  enabled: true
+  szx: 6              # 1024-byte blocks
+  max_assembled_bytes: 1048576
 ```
 
 ---
@@ -518,7 +586,7 @@ Takagi includes an extensible registry system for protocol constants, providing 
 
 ## Plugin System
 
-Takagi ships with an EventBus-backed plugin manager for runtime extensions and future clustering.
+Takagi ships with an EventBus-backed plugin manager for runtime extensions. The bus delivers in-process only; remote or cross-process event delivery is planned, not present.
 
 - **Auto-discovery**: Finds plugins under `Takagi::Plugins::*` and `takagi-plugin-*` gems (configurable via `plugins.auto_discover`).
 - **Config + DSL**: Declare in code (`plugin MyPlugin, opt: 1`) or YAML:
@@ -531,10 +599,10 @@ Takagi ships with an EventBus-backed plugin manager for runtime extensions and f
           sample_rate: 0.1
       - prometheus
   ```
-- **Lifecycle hooks**: Plugins may implement `before_apply/apply/after_apply` (plus `before_unload/shutdown`). Events publish to `hooks.plugin_*` on the EventBus.
+- **Lifecycle hooks**: Plugins may implement `before_apply/apply/after_apply` (plus `before_unload/shutdown`). Events publish to `hooks.plugin_*` on the `Bus`.
 - **Deps & versions**: `metadata` supports `dependencies:` and `requires:`; dependencies auto-enable first and versions are checked.
 - **Config schema**: Optional `config_schema` validates types/enums/ranges and fills defaults before apply.
-- **Hooked internals**: Core emits `hooks.*` for registry changes, route additions, middleware before/after, server start/stop, Observe subscribe/notify—ready for observability across nodes.
+- **Hooked internals**: Core emits `hooks.*` for registry changes, route additions, middleware before/after, server start/stop, Observe subscribe/notify, all on the local bus.
 
 Quick start:
 ```ruby
@@ -622,6 +690,10 @@ Takagi::CoAP::Registries::Option.register(23, 'Block2', :block2, rfc: 'RFC 7959 
 | **CoRE metadata DSL (RFC 6690)** | Describe discovery attributes inline or at boot | ✅ Ready |
 | **Observe (RFC 7641)**           | Offer server push and subscribe to remote feeds | ✅ Ready |
 | **CoAP over TCP (RFC 8323)**     | Reliable transport for constrained clients | ✅ Ready |
+| **Block-Wise Transfer (RFC 7959)** | Large payloads split into numbered blocks | ✅ Ready |
+| **Proxy (RFC 7252 §5.7)**        | Reverse proxy (prefix routes) and forward proxy (Proxy-Uri) | ✅ Ready |
+| **Transport Switching**          | Route UDP clients to TCP backends and vice versa | ✅ Ready |
+| **Unified Cluster**              | One worker count serves all transports; supervised processes | ✅ Ready |
 | **Response Helpers**             | Semantic helpers like `json`, `created`, `deleted` | ✅ Ready |
 | **Error Helpers**                | Easy error responses with `not_found`, `forbidden`, etc. | ✅ Ready |
 | **Auto-extracted Params**        | No need to specify params in block arguments | ✅ Ready |
@@ -638,6 +710,7 @@ Takagi::CoAP::Registries::Option.register(23, 'Block2', :block2, rfc: 'RFC 7959 
 | **Block-based Initialization**   | Auto-cleanup with Ruby-idiomatic block pattern | ✅ Ready |
 | **Response Wrapper**             | Convenient status checking with `success?`, `error?`, etc. | ✅ Ready |
 | **JSON Convenience Methods**     | Automatic JSON encoding/decoding with `post_json`, `get_json` | ✅ Ready |
+| **Block-Wise Support**           | Automatic multi-block upload/download over UDP | ✅ Ready |
 | **Readable Default Output**      | Human-readable response formatting by default | ✅ Ready |
 | **All CoAP Methods**             | Support for GET, POST, PUT, DELETE over UDP/TCP | ✅ Ready |
 
@@ -649,7 +722,40 @@ Takagi::CoAP::Registries::Option.register(23, 'Block2', :block2, rfc: 'RFC 7959 
 | **Protocol Constants**           | RFC-aligned constants for methods, responses, options | ✅ Ready |
 | **Code Helpers**                 | Convert between numeric codes and human-readable strings | ✅ Ready |
 | **Plugin Architecture**          | Register custom methods, options, and response codes | ✅ Ready |
+| **Block-Wise Transfer**          | RFC 7959 block options (Block1/Block2) for large payloads | ✅ Ready |
+| **Proxy Option Handling**        | Proxy-Uri, Proxy-Scheme, Uri-* options per RFC 7252 §5.10 | ✅ Ready |
 | **RFC Documentation**            | Inline RFC references for all constants | ✅ Ready |
+
+---
+
+## Architecture
+
+### Unified cluster, one worker count per service
+
+Takagi uses a single cluster to supervise all transports. When you set `processes: 4`, the service forks 4 OS worker processes and **every transport** (UDP, TCP, or both) is served by all of them. This means:
+
+- One number decides the whole service concurrency, not per-protocol counts.
+- Each worker serves every transport the service exposes.
+- A crashed worker is reaped and replaced one-for-one.
+- `processes: 1` runs everything in the booting process with no forks.
+
+Per-transport knobs still exist for **threads** (handler pool size) and **max_connections** (TCP accepted-connection cap), but these layer under the one worker count.
+
+### Proxy as a first-class component
+
+The proxy is not an afterthought—it is a CoAP-native reverse+forward proxy that:
+- Maps URI prefixes to backends via configuration (`proxy.routes`).
+- Re-originates Message ID and Token per hop (never reuses them across hops).
+- Switches transport per route (UDP in → TCP out, and vice versa).
+- Aggregates `/.well-known/core` from all backends when `discovery: aggregate`.
+- Honors Proxy-Uri / Proxy-Scheme for forward-proxy requests.
+- Prevents request loops by recognizing its own names and rejecting self-routes.
+
+The proxy passes Block1/Block2 through untouched and does not relay Observe subscriptions; each limitation is documented. See `CONFIGURATION.md` for the full proxy reference.
+
+### Block-wise and per-hop reliability
+
+Large payloads travel as numbered blocks (RFC 7959). The server slices large responses (Block2) and reassembles large requests (Block1). Because the proxy re-originates messages per hop, block-wise assembly and reliability are **per-hop** rather than end-to-end. This is consistent with RFC 8323's intermediary model.
 
 ---
 
