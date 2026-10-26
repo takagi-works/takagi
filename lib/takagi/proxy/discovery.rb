@@ -51,7 +51,7 @@ module Takagi
       #
       # @return [Array<Takagi::Router::RouteEntry>]
       def local_entries
-        @route_table.routes.map(&:prefix).uniq.map do |prefix|
+        @route_table.routes.map(&:prefix).uniq.reject { |prefix| prefix == '/' }.map do |prefix|
           Takagi::Router::RouteEntry.new(method: 'GET', path: prefix, block: nil)
         end
       end
@@ -69,7 +69,12 @@ module Takagi
         body = fetch(route)
         return [] if body.nil?
 
-        Takagi::Discovery::CoreLinkFormat.split_entries(body).map { |entry| rewrite(entry, route.prefix) }
+        entries = Takagi::Discovery::CoreLinkFormat.split_entries(body)
+        # A transparent route forwards the backend's paths unchanged, so its links are already
+        # public and must NOT be re-prefixed.
+        return entries.map(&:to_s) unless route.strip_prefix?
+
+        entries.map { |entry| rewrite(entry, route.prefix) }
       end
 
       def fetch(route)

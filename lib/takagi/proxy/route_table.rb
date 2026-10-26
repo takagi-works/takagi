@@ -16,13 +16,14 @@ module Takagi
     # `outbound` is nil unless a route names one, and nil means "place the request on the
     # transport it arrived on" (the same-transport default; the override is row 4's).
     class Route
-      attr_reader :prefix, :host, :port, :outbound
+      attr_reader :prefix, :host, :port, :outbound, :strip_prefix
 
-      def initialize(prefix:, host:, port:, outbound: nil)
+      def initialize(prefix:, host:, port:, outbound: nil, strip_prefix: true)
         @prefix = prefix
         @host = host
         @port = port
         @outbound = outbound
+        @strip_prefix = strip_prefix != false
         @segments = self.class.segments(prefix).freeze
         freeze
       end
@@ -40,9 +41,18 @@ module Takagi
         candidate.length >= depth && candidate.first(depth) == @segments
       end
 
-      # The path the backend sees: `path` with the prefix removed, always absolute.
+      # The path the backend sees: the full path when the route is TRANSPARENT (the prefix only
+      # selected the backend), otherwise `path` with the prefix removed, always absolute.
       def relative_path(path)
+        return path.to_s.empty? ? '/' : path.to_s unless strip_prefix?
+
         "/#{self.class.segments(path).drop(depth).join('/')}"
+      end
+
+      # Whether this route consumes its prefix. A transparent route keeps the client's path, so
+      # the same service serves the same URIs with and without the proxy.
+      def strip_prefix?
+        @strip_prefix
       end
 
       def authority
@@ -51,7 +61,8 @@ module Takagi
 
       def to_s
         suffix = outbound ? " (#{outbound})" : ''
-        "#{prefix} -> #{authority}#{suffix}"
+        mode = strip_prefix? ? '' : ' (path preserved)'
+        "#{prefix} -> #{authority}#{suffix}#{mode}"
       end
 
       # Splits a URI path into its segments, discarding the empty ones a leading, trailing or
@@ -68,6 +79,39 @@ module Takagi
     # built directly by `Takagi::Proxy.new` - constructs one without touching the process
     # configuration.
     class RouteTable
+      # The mapping mode a configured route asks for: a prefixed route strips its prefix by
+      # default, while a transparent route uses the prefix only to select the backend.
+      module RouteMode
+        private
+
+        def normalize_route_mode(prefix, strip_prefix)
+          return [normalize_prefix(prefix), normalize_strip_prefix(strip_prefix)] unless prefix.nil?
+
+          raise ArgumentError, 'a proxy route without a prefix cannot strip one (strip_prefix: true)' if strip_prefix == true
+
+          ['/', false]
+        end
+
+        def normalize_strip_prefix(value)
+          return true if value.nil?
+          return value if [true, false].include?(value)
+          return true if value.to_s.casecmp('true').zero?
+          return false if value.to_s.casecmp('false').zero?
+
+          raise ArgumentError, "proxy route strip_prefix must be true or false: #{value.inspect}"
+        end
+
+        # A key a route object need not answer, so a route that predates it stays valid.
+        def optional_field(entry, key)
+          return entry.key?(key.to_s) ? entry[key.to_s] : entry[key] if entry.is_a?(Hash)
+          return entry.public_send(key) if entry.respond_to?(key)
+
+          nil
+        end
+      end
+
+      include RouteMode
+
       # A successful lookup: the route that claimed the path plus the path left for its backend.
       Match = Struct.new(:route, :relative_path, keyword_init: true) do
         def backend
@@ -226,11 +270,13 @@ module Takagi
       def coerce_route(entry)
         return entry if entry.is_a?(Route)
 
+        prefix, strip_prefix = normalize_route_mode(field(entry, :prefix), optional_field(entry, :strip_prefix))
         Route.new(
-          prefix: normalize_prefix(field(entry, :prefix)),
+          prefix: prefix,
           host: normalize_host(field(entry, :host)),
           port: normalize_port(field(entry, :port)),
-          outbound: normalize_outbound(field(entry, :outbound))
+          outbound: normalize_outbound(field(entry, :outbound)),
+          strip_prefix: strip_prefix
         )
       end
 

@@ -17,11 +17,12 @@ module Takagi
 
       # Returns the middleware stack instance
       #
-      # Lazily initializes the middleware stack with default configuration
+      # A Base service resolves through the process-global router, so it runs the process-wide
+      # stack. A service with isolated routes (an Application's CompositeRouter) builds its own.
       #
       # @return [MiddlewareStack] The middleware stack instance
       def middleware_stack
-        @middleware_stack ||= Takagi::MiddlewareStack.load_from_config('', router)
+        @middleware_stack ||= Takagi::MiddlewareStack.instance
       end
 
       # Adds a middleware to the stack

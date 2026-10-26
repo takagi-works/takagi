@@ -24,7 +24,7 @@ module Takagi
       # @param port [Integer] Port to bind to
       # @param protocols [Array<Symbol>, nil] Protocols to enable (uses config if nil)
       # @return [Server, Multi] The spawned server instance
-      def spawn!: (?port: ::Integer, ?protocols: untyped?) -> untyped
+      def spawn!: (?port: ::Integer?, ?protocols: untyped?) -> untyped
 
       private
 
@@ -52,8 +52,9 @@ module Takagi
       #   same value handed to every transport; a per-protocol `processes` is only a
       #   compatibility alias that restates it
       # @param router [Router, CompositeRouter, nil] Custom router
+      # @param middleware_stack [Object, nil] the stack the transport serves through
       # @return [Server] Server instance
-      def instantiate_server: (untyped protocol, untyped port, threads: untyped, processes: untyped, ?max_connections: untyped?, ?router: (Router | CompositeRouter)?) -> untyped
+      def instantiate_server: (untyped protocol, untyped port, threads: untyped, processes: untyped, ?max_connections: untyped?, ?router: (Router | CompositeRouter)?, ?middleware_stack: untyped?) -> untyped
 
       # True when the protocol's own settings carry a `threads` count: the presence is
       # what opens the TCP handler pool
@@ -75,6 +76,15 @@ module Takagi
 
       # ONE worker count per service, resolved once per build
       def resolve_service_processes!: () -> untyped
+
+      # A setting this service carries (an Application's `configure` block), or nil
+      def service_setting: (Symbol key) -> untyped
+
+      # Every protocol either the global configuration or this service configures
+      def configured_protocols: () -> Array[Symbol]
+
+      # One protocol's settings, the service's overrides winning key by key
+      def protocol_settings_for: (Symbol protocol) -> Hash[Symbol, untyped]
 
       # Every WRITTEN `processes` value, paired with the layer that carries it
       def configured_process_counts: () -> untyped

@@ -297,6 +297,28 @@ RSpec.describe Takagi::Config do
       expect(proxy.routes.last.outbound).to eq(:tcp)
     end
 
+    it 'parses a transparent route and a prefix-less catch-all (PROOF)' do
+      write_config <<~YAML
+        proxy:
+          enabled: true
+          routes:
+            - prefix: /prefix
+              host: 10.0.0.1
+              port: 5683
+              strip_prefix: false
+            - host: 10.0.0.2
+              port: 5683
+      YAML
+
+      proxy = config.proxy
+      expect(proxy.routes.first.strip_prefix).to be(false)
+      expect(proxy.routes.last.prefix).to be_nil
+
+      table = Takagi::Proxy::RouteTable.from_config(config)
+      expect(table.resolve('/prefix/x').relative_path).to eq('/prefix/x')
+      expect(table.resolve('/anything').route.prefix).to eq('/')
+    end
+
     it 'keeps the defaults for a YAML that writes no proxy block at all (PROOF, row 1)' do
       write_config "port: 5684\n"
 

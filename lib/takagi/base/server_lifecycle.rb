@@ -32,17 +32,18 @@ module Takagi
         boot!(config_path: config_path)
         enable_plugins!(app: self)
 
+        selected_port = port || service_setting(:port) || Takagi.config.port
+        selected_protocols = Array(protocols || service_setting(:protocols) || Takagi.config.protocols).map(&:to_sym)
+
         # Show startup banner
         if banner
           print_startup_banner(
-            port: port || Takagi.config.port,
-            protocols: protocols || Takagi.config.protocols,
-            router: router || self.router  # Pass router to banner
+            port: selected_port,
+            protocols: selected_protocols,
+            router: router || self.router
           )
         end
 
-        selected_port = port || Takagi.config.port
-        selected_protocols = Array(protocols || Takagi.config.protocols).map(&:to_sym)
         servers = build_servers(selected_protocols, selected_port, router: router)
         announce_service_boot(protocols: selected_protocols, servers: servers)
         run_servers(servers, selected_protocols)
@@ -53,14 +54,11 @@ module Takagi
       # @param port [Integer] Port to bind to
       # @param protocols [Array<Symbol>, nil] Protocols to enable (uses config if nil)
       # @return [Server, Multi] The spawned server instance
-      def spawn!(port: 5683, protocols: nil)
-        protos = if protocols
-                   Array(protocols)
-                 else
-                   Takagi.config.protocols
-                 end.map(&:to_sym)
+      def spawn!(port: nil, protocols: nil)
+        protos = Array(protocols || service_setting(:protocols) || Takagi.config.protocols).map(&:to_sym)
+        selected_port = port || service_setting(:port) || 5683
 
-        servers = build_servers(protos, port)
+        servers = build_servers(protos, selected_port)
         announce_service_boot(protocols: protos, servers: servers)
 
         if servers.length == 1
@@ -124,18 +122,29 @@ module Takagi
         # ONE worker count per service: resolve it once, here, before any server exists. Every
         # transport forks this same number, and a per-protocol `processes` only restates it.
         processes = resolve_service_processes!
+        service_router, service_stack = service_defaults(router)
         Array(protocols).map(&:to_sym).map do |protocol|
-          settings = Takagi.config.protocol_settings[protocol] || {}
+          settings = protocol_settings_for(protocol)
           apply_concurrency_vocabulary!(protocol, settings)
           instantiate_server(
             protocol,
             port,
-            threads: settings[:threads] || Takagi.config.threads,
+            threads: settings[:threads] || service_setting(:threads) || Takagi.config.threads,
             processes: processes,
-            max_connections: settings[:max_connections] || Takagi.config.max_connections,
-            router: router
+            max_connections: settings[:max_connections] || service_setting(:max_connections) || Takagi.config.max_connections,
+            router: service_router,
+            middleware_stack: service_stack
           )
         end
+      end
+
+      # The router and stack a transport serves through: the caller's, else the service's OWN
+      # (Base resolves through the process-global router, an Application through its composite
+      # one), else the transport's default. A bare lifecycle host has neither and gets nil for
+      # both, which keeps `build_servers` drivable from a test double.
+      def service_defaults(router)
+        [router || (respond_to?(:router) ? self.router : nil),
+         respond_to?(:middleware_stack) ? middleware_stack : nil]
       end
 
       # Instantiates a server for the given protocol using ServerRegistry
@@ -145,13 +154,16 @@ module Takagi
       # @param threads [Integer] Number of worker threads
       # @param processes [Integer] The service's ONE resolved worker count, the same value
       #   handed to every transport
-      # @param router [Router, CompositeRouter, nil] Custom router (uses global if nil)
+      # @param router [Router, CompositeRouter, nil] Custom router (uses the service's own if nil)
+      # @param middleware_stack [MiddlewareStack, Object, nil] the stack the transport serves
+      #   through (uses the process stack if nil)
       # @return [Server] Server instance
-      def instantiate_server(protocol, port, threads:, processes:, max_connections: nil, router: nil)
+      def instantiate_server(protocol, port, threads:, processes:, max_connections: nil, router: nil,
+                             middleware_stack: nil)
         options = { port: port }
         # The address every transport of this service binds. Read from the global config the same
         # way `threads` and `max_connections` below are, so one key governs the whole service.
-        options[:bind_address] = Takagi.config.bind_address
+        options[:bind_address] = service_setting(:bind_address) || Takagi.config.bind_address
         # A server's `threads` is its own pool size. UDP's readers always take the
         # resolved value, the global default included, because that is how they have
         # always been configured. A TCP handler pool is opt-in on the protocol's OWN key:
@@ -161,6 +173,7 @@ module Takagi
         # reach the pool.
         options[:worker_threads] = threads if protocol == :udp || per_protocol_threads?(protocol)
         options[:router] = router if router
+        options[:middleware_stack] = middleware_stack if middleware_stack
 
         # Every transport forks the service's ONE worker count, so the resolved number always
         # reaches the server: `1` is the in-process shape, not an absent key - unlike `threads`,
@@ -174,7 +187,7 @@ module Takagi
 
       # True when the protocol's own settings carry a `threads` count: the presence is
       # what opens the TCP handler pool, so the resolved number alone cannot decide it.
-      def per_protocol_threads?(protocol) = !Takagi.config.protocol_settings.dig(protocol, :threads).nil?
+      def per_protocol_threads?(protocol) = protocol_settings_for(protocol).key?(:threads)
 
       # Runs servers (single or multi-protocol)
       #
@@ -209,6 +222,27 @@ module Takagi
     # line to write instead - raising for a global key would break the configurations that write
     # only global values today.
     module ServerLifecycle
+      # The SERVICE-level concurrency and transport overrides an Application's `configure` block
+      # carries. Base carries none and keeps reading Takagi.config.
+      module ServiceSettings
+        private
+
+        def service_setting(key)
+          respond_to?(:service_settings) ? service_settings[key] : nil
+        end
+
+        def configured_protocols
+          Takagi.config.protocol_settings.keys | (service_setting(:protocol_settings)&.keys || [])
+        end
+
+        def protocol_settings_for(protocol)
+          (Takagi.config.protocol_settings[protocol] || {})
+            .merge(service_setting(:protocol_settings)&.dig(protocol) || {})
+        end
+      end
+
+      include ServiceSettings
+
       # The transports whose serving pool takes the global `threads` value as its own size. Every
       # other target opens its pool only on the protocol's own key, so a written global count
       # either belongs to this list or is reported once instead of being dropped in silence.
@@ -239,8 +273,10 @@ module Takagi
       # this raise.
       def configured_process_counts
         counts = []
+        counts << [:service, service_setting(:processes)] if service_setting(:processes)
         counts << [:global, Takagi.config.processes] if Takagi.config.written?(:processes)
-        Takagi.config.protocol_settings.each do |transport, settings|
+        configured_protocols.each do |transport|
+          settings = protocol_settings_for(transport)
           counts << [transport, settings[:processes]] if settings.key?(:processes)
         end
         counts
@@ -260,13 +296,18 @@ module Takagi
       end
 
       def process_count_source(source)
-        source == :global ? 'the top-level `processes`' : "protocol_settings[:#{source}][:processes]"
+        case source
+        when :global then 'the top-level `processes`'
+        when :service then "the service's `processes`"
+        else "protocol_settings[:#{source}][:processes]"
+        end
       end
 
       # A per-protocol key its target cannot apply raises instead of vanishing in
       # `instantiate_server`: `protocol_settings[:udp][:max_connections]` was dropped in silence.
       def reject_inapplicable_protocol_keys!
-        Takagi.config.protocol_settings.each do |target, settings|
+        configured_protocols.each do |target|
+          settings = protocol_settings_for(target)
           next if settings[:max_connections].nil? || accepts_max_connections?(target)
 
           raise ArgumentError,
@@ -287,11 +328,11 @@ module Takagi
       # A global `max_connections` with a datagram target was dropped in silence: the UDP server
       # is never given the key, so the written cap capped nothing.
       def warn_about_unconsumed_max_connections(protocol)
-        global = Takagi.config.max_connections
+        global = service_setting(:max_connections) || Takagi.config.max_connections
         return if global.nil? || accepts_max_connections?(protocol)
 
         Takagi.logger.warn(
-          "Ignoring the global `max_connections: #{global}` for protocol :#{protocol}: it is a " \
+          "Ignoring the service-wide `max_connections: #{global}` for protocol :#{protocol}: it is a " \
           "server-wide default for the TCP server's per-worker accepted-connection cap, and " \
           ":#{protocol} accepts no connections. Write " \
           "`protocol_settings: { tcp: { max_connections: #{global} } }` in takagi.yml to cap the " \
@@ -303,11 +344,12 @@ module Takagi
       # transport's pool opens only on the protocol's own key. The trigger is the key's presence,
       # not its value, so a written count of 1 is still reported while the untouched default is not.
       def warn_about_unconsumed_threads(protocol, settings)
-        global = Takagi.config.threads.to_i
-        return if !Takagi.config.written?(:threads) || GLOBAL_THREADS_CONSUMERS.include?(protocol) || settings.key?(:threads)
+        global = service_setting(:threads) || Takagi.config.threads.to_i
+        written = !service_setting(:threads).nil? || Takagi.config.written?(:threads)
+        return if !written || GLOBAL_THREADS_CONSUMERS.include?(protocol) || settings.key?(:threads)
 
         Takagi.logger.warn(
-          "Ignoring the global `threads: #{global}` for protocol :#{protocol}: its handler pool opens " \
+          "Ignoring the service-wide `threads: #{global}` for protocol :#{protocol}: its handler pool opens " \
           "only on :#{protocol}'s own key, so this count is not applied to this transport, and a pool " \
           "built from it would change how existing :#{protocol} deployments serve: it was written for " \
           "the whole deployment rather than for :#{protocol}. Write `protocol_settings: { #{protocol}: " \

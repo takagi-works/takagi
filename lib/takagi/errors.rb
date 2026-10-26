@@ -75,37 +75,6 @@ module Takagi
       end
     end
 
-    # Raised when thread pool operations fail
-    class ThreadPoolError < TakagiError
-      def self.already_started(controller_name)
-        new(
-          "Thread pool for #{controller_name} is already running",
-          context: {
-            controller: controller_name,
-            action: "Attempted to start thread pool"
-          },
-          suggestions: [
-            "Call shutdown_workers! before restarting",
-            "Check workers_running? before calling start_workers!"
-          ]
-        )
-      end
-
-      def self.not_started(controller_name)
-        new(
-          "Thread pool for #{controller_name} hasn't been started yet",
-          context: {
-            controller: controller_name,
-            action: "Attempted to schedule work"
-          },
-          suggestions: [
-            "Call #{controller_name}.start_workers! first",
-            "Or use lazy initialization by calling #{controller_name}.thread_pool"
-          ]
-        )
-      end
-    end
-
     # Raised when registry operations fail
     class RegistryError < TakagiError
       def self.not_found(registry_name, key, available_keys)
@@ -463,7 +432,7 @@ module Takagi
             expected: "Positive integer (1..32)"
           },
           suggestions: [
-            "Use a positive integer: set :processes, 4",
+            "Use a positive integer: processes 4",
             "Typical values: 1 (simple), 4 (moderate), 8 (high scale)",
             "Or use a profile: profile :high_throughput"
           ]

@@ -4,20 +4,13 @@ module Takagi
   # Provides a Rack-style middleware chain for request/response processing.
   # Middleware can be configured via Takagi.config.middleware or programmatically.
   #
-  # @example Programmatic configuration
-  #   stack = MiddlewareStack.instance
-  #   stack.use(Takagi::Middleware::Logging.new)
-  #   stack.use(Takagi::Middleware::Caching.new)
-  #
-  # @example YAML configuration (takagi.yml)
-  #   middleware:
-  #     enabled: true
-  #     stack:
-  #       - Logging
-  #       - name: Caching
-  #         options:
-  #           ttl: 300
+  # The process-wide stack is {.instance}; a service with its own router (an Application's
+  # CompositeRouter) gets a stack of its own through {.build}.
   class MiddlewareStack
+    INSTANCE_MUTEX: Mutex
+
+    self.@instance: MiddlewareStack?
+
     @logger: untyped
 
     @middlewares: untyped
@@ -26,9 +19,15 @@ module Takagi
 
     @config_loaded: untyped
 
-    include Singleton
+    # The process-wide stack a service that declares no stack of its own runs
+    def self.instance: () -> MiddlewareStack
+
+    # A stack of its own for one service, routing through `router`
+    def self.build: (?router: (Router | CompositeRouter)?) -> MiddlewareStack
 
     attr_reader middlewares: untyped
+
+    attr_accessor router: untyped
 
     def initialize: () -> void
 

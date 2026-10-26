@@ -76,8 +76,9 @@ RSpec.describe Takagi::Application do
 
       TestApp.load_controllers!
 
-      # Should have 2 controllers: DiscoveryController (auto-mounted) + TelemetryController
-      expect(TestApp.router.mounted_controllers.length).to eq(2)
+      # Three mounts: the discovery controller, the application root (app-level and plugin routes),
+      # and the loaded controller.
+      expect(TestApp.router.mounted_controllers.map(&:mount_path)).to include('/.well-known', '/', '/telemetry')
       expect(TestApp.router.all_routes).to include('GET /telemetry/data')
       expect(TestApp.router.all_routes).to include('GET /.well-known/core')  # Discovery endpoint
     end

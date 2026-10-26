@@ -92,9 +92,37 @@ SensorAPI.run!
 ```
 🔥 **Boom! You just built a CoAP API in Ruby.**
 
+### **Structure a service with `Takagi::Application`**
+
+For a modular service, put routes in controllers and mount them in an application. Concurrency belongs to the service, not to a controller:
+
+```ruby
+require 'takagi'
+
+class TelemetryController < Takagi::Controller
+  configure { mount '/telemetry' }
+
+  get '/temperature' do
+    json value: 21.5
+  end
+end
+
+class SensorService < Takagi::Application
+  configure do
+    load_controllers TelemetryController
+    threads 8       # serving threads inside each process
+    processes 2     # OS workers for the whole service
+  end
+end
+
+SensorService.run!(port: 5683, protocols: [:udp, :tcp])
+```
+
+`configure` also accepts `port`, `protocols`, `bind_address`, `max_connections`, `profile`, `protocol_settings`, and `set`. A `Takagi::Base` app writes the same keys in `takagi.yml`; controllers carry no `threads`/`processes` setting.
+
 ### **Deploy behind a proxy**
 
-When you have multiple backends (one per controller or service), use the built-in CoAP proxy to expose them at a single address:
+When you have multiple backends (one per service), use the built-in CoAP proxy to expose them at a single address:
 
 ```yaml
 # proxy.yml
@@ -104,13 +132,19 @@ protocols: [udp, tcp]
 proxy:
   enabled: true
   routes:
-    - prefix: /sensors
+    - prefix: /sensors          # namespace: /sensors/temp -> /temp
       host: 192.168.1.10
       port: 5683
-    - prefix: /management
+    - prefix: /management       # same-transport by default; TCP out here
       host: 192.168.1.11
       port: 5683
       outbound: tcp
+    - prefix: /telemetry        # transparent: /telemetry/temp -> /telemetry/temp
+      host: 192.168.1.12
+      port: 5683
+      strip_prefix: false
+    - host: 192.168.1.13        # no prefix: any path -> the same path
+      port: 5683
   names:
     - proxy.example.com
     - 192.168.1.1
@@ -132,7 +166,7 @@ Takagi.logger.info "proxy listening: UDP #{proxy.port(:udp)}, TCP #{proxy.port(:
 proxy.run!
 ```
 
-The proxy supports reverse-proxy (prefix-to-backend routes), forward-proxy (Proxy-Uri/Proxy-Scheme), and transport switching per route so a UDP device can reach a TCP backend. See `CONFIGURATION.md` for the full proxy guide.
+The proxy supports namespace (prefix), transparent, and catch-all routes, forward-proxy (Proxy-Uri/Proxy-Scheme), and transport switching per route so a UDP device can reach a TCP backend. With `discovery: aggregate`, prefixed routes rewrite backend links under their prefix while transparent routes leave the links exactly as the backend advertises them. See `CONFIGURATION.md` for the full proxy reference and `guide/proxy.md` for the task-oriented page.
 
 ### **Configure CoRE discovery metadata**
 
@@ -578,6 +612,8 @@ block_wise:
   max_assembled_bytes: 1048576
 ```
 
+**Concurrency is a service setting.** An `Application` declares `threads`, `processes`, a `profile`, and the transport options in its `configure` block (explicit values win over a profile); a `Takagi::Base` app writes the same keys at the top level of `takagi.yml`. Controllers have no concurrency settings.
+
 ---
 
 ## CoAP Protocol Registry System
@@ -691,9 +727,10 @@ Takagi::CoAP::Registries::Option.register(23, 'Block2', :block2, rfc: 'RFC 7959 
 | **Observe (RFC 7641)**           | Offer server push and subscribe to remote feeds | ✅ Ready |
 | **CoAP over TCP (RFC 8323)**     | Reliable transport for constrained clients | ✅ Ready |
 | **Block-Wise Transfer (RFC 7959)** | Large payloads split into numbered blocks | ✅ Ready |
-| **Proxy (RFC 7252 §5.7)**        | Reverse proxy (prefix routes) and forward proxy (Proxy-Uri) | ✅ Ready |
+| **Proxy (RFC 7252 §5.7)**        | Namespace, transparent and catch-all routes; forward proxy (Proxy-Uri) | ✅ Ready |
 | **Transport Switching**          | Route UDP clients to TCP backends and vice versa | ✅ Ready |
 | **Unified Cluster**              | One worker count serves all transports; supervised processes | ✅ Ready |
+| **Application service DSL**      | Controllers, app-level routes, and service-level threads/processes | ✅ Ready |
 | **Response Helpers**             | Semantic helpers like `json`, `created`, `deleted` | ✅ Ready |
 | **Error Helpers**                | Easy error responses with `not_found`, `forbidden`, etc. | ✅ Ready |
 | **Auto-extracted Params**        | No need to specify params in block arguments | ✅ Ready |
@@ -741,13 +778,15 @@ Takagi uses a single cluster to supervise all transports. When you set `processe
 
 Per-transport knobs still exist for **threads** (handler pool size) and **max_connections** (TCP accepted-connection cap), but these layer under the one worker count.
 
+Concurrency is declared on the service: an `Application` sets `threads`/`processes` in `configure`, a `Base` app in `takagi.yml`. There is no per-controller pool or process count.
+
 ### Proxy as a first-class component
 
-The proxy is not an afterthought—it is a CoAP-native reverse+forward proxy that:
-- Maps URI prefixes to backends via configuration (`proxy.routes`).
+The proxy is not an afterthought - it is a CoAP-native reverse+forward proxy that:
+- Maps URI namespaces to backends (`proxy.routes`); `strip_prefix: false` keeps the client path and a route with no prefix is a transparent catch-all.
 - Re-originates Message ID and Token per hop (never reuses them across hops).
-- Switches transport per route (UDP in → TCP out, and vice versa).
-- Aggregates `/.well-known/core` from all backends when `discovery: aggregate`.
+- Switches transport per route (UDP in -> TCP out, and vice versa).
+- Aggregates `/.well-known/core` from all backends when `discovery: aggregate`; prefixed links are rewritten under their prefix, transparent links are left unchanged.
 - Honors Proxy-Uri / Proxy-Scheme for forward-proxy requests.
 - Prevents request loops by recognizing its own names and rejecting self-routes.
 

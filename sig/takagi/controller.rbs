@@ -5,10 +5,7 @@ module Takagi
     type config_hash = {
       mount_path: String?,
       nested_from: singleton(Controller)?,
-      nested_controllers: Array[singleton(Controller)],
-      profile: Symbol?,
-      processes: Integer?,
-      threads: Integer?
+      nested_controllers: Array[singleton(Controller)]
     }
 
     # Get the controller's isolated router
@@ -44,15 +41,6 @@ module Takagi
     # Get nested controllers
     def self.nested_controllers: () -> Array[singleton(Controller)]
 
-    # Get profile name
-    def self.profile_name: () -> Symbol?
-
-    # Get effective process count
-    def self.process_count: () -> Integer?
-
-    # Get effective thread count
-    def self.thread_count: () -> Integer?
-
     # Configuration DSL context
     class ConfigContext
       def initialize: (singleton(Controller) controller_class) -> void
@@ -62,12 +50,6 @@ module Takagi
 
       # Nest child controllers
       def nest: (*singleton(Controller) controllers) -> void
-
-      # Set load profile
-      def profile: (Symbol name) -> void
-
-      # Set configuration value
-      def set: (Symbol key, untyped value) -> void
     end
   end
 end

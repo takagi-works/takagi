@@ -32,7 +32,6 @@ module Takagi
     }.freeze
     RouterConfig = Struct.new(:default_content_format, keyword_init: true)
     MiddlewareConfig = Struct.new(:enabled, :stack, keyword_init: true)
-    AllocationConfig = Struct.new(:mode, :total_threads, keyword_init: true)
     PluginConfig = Struct.new(:enabled, :auto_discover, keyword_init: true)
     BlockWiseConfig = Struct.new(
       :szx, :max_assembled_bytes, :assembly_ttl, :max_concurrent_assemblies, :enabled,
@@ -41,14 +40,14 @@ module Takagi
     # One `proxy.routes` entry as configuration carries it: plain data. Whether the prefix is
     # absolute and unique, and whether the authority is well formed, is
     # `Takagi::Proxy::RouteTable`'s boot validation (row 1 of .omo/plans/coap-proxy.md).
-    ProxyRouteConfig = Struct.new(:prefix, :outbound, :host, :port, keyword_init: true)
+    ProxyRouteConfig = Struct.new(:prefix, :outbound, :host, :port, :strip_prefix, keyword_init: true)
     ProxyConfig = Struct.new(:enabled, :routes, :names, :discovery, :forward, keyword_init: true)
     PROXY_DISCOVERY_MODES = %i[aggregate local].freeze
     PROXY_FORWARD_MODES = %i[deny configured].freeze
     PROXY_TRANSPORTS = %i[udp tcp].freeze
 
     attr_accessor :port, :bind_address, :logger, :observability, :auto_migrate, :custom,
-                  :protocols, :server_name, :event_bus, :router, :middleware, :allocation, :plugins,
+                  :protocols, :server_name, :event_bus, :router, :middleware, :plugins,
                   :block_wise, :proxy, :max_connections
     attr_reader :protocol_settings
 
@@ -58,7 +57,6 @@ module Takagi
       set_event_bus_defaults
       set_router_defaults
       set_middleware_defaults
-      set_allocation_defaults
       set_plugin_defaults
       set_block_wise_defaults
       set_proxy_defaults
@@ -100,7 +98,6 @@ module Takagi
       apply_event_bus(data)
       apply_router(data)
       apply_middleware(data)
-      apply_allocation(data)
       apply_plugins(data)
       apply_block_wise(data)
       apply_proxy(data)
@@ -179,23 +176,6 @@ module Takagi
       end
     end
 
-    def apply_allocation(data)
-      allocation_data = data['allocation']
-      return unless allocation_data
-
-      # Set allocation mode (:manual or :automatic)
-      if allocation_data['mode']
-        mode = allocation_data['mode'].to_sym
-        unless [:manual, :automatic].include?(mode)
-          raise ArgumentError, "Invalid allocation mode: #{mode}. Use 'manual' or 'automatic'"
-        end
-        @allocation.mode = mode
-      end
-
-      # Set total threads for automatic mode
-      @allocation.total_threads = allocation_data['total_threads'] if allocation_data['total_threads']
-    end
-
     def apply_block_wise(data)
       block_wise_data = data['block_wise']
       return unless block_wise_data.is_a?(Hash)
@@ -251,7 +231,8 @@ module Takagi
         prefix: entry['prefix'],
         outbound: parse_proxy_mode('route outbound', entry['outbound'], PROXY_TRANSPORTS, nil),
         host: entry['host'],
-        port: entry['port']
+        port: entry['port'],
+        strip_prefix: entry['strip_prefix']
       )
     end
 
@@ -362,13 +343,6 @@ module Takagi
       @middleware = MiddlewareConfig.new(
         enabled: true,
         stack: default_middleware_stack
-      )
-    end
-
-    def set_allocation_defaults
-      @allocation = AllocationConfig.new(
-        mode: :automatic,
-        total_threads: nil
       )
     end
 

@@ -459,9 +459,8 @@ module Takagi
       end
 
       def build_response(inbound_request)
-        # TCP already runs each connection in its own thread, so we don't need
-        # to delegate to controller pools - just process synchronously.
-        # Controller pools are primarily for UDP where we have fixed worker threads.
+        # TCP runs each connection in its own thread (or the bounded handler pool), so it
+        # processes synchronously. There is no controller pool to delegate to.
         result = @middleware_stack.call(inbound_request)
         ResponseBuilder.build(inbound_request, result, logger: @logger)
       end

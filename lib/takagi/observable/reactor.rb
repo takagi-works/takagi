@@ -49,7 +49,7 @@ module Takagi
         # @return [Hash] The reactor's configuration hash
         def config
           @config ||= {
-            threads: nil,  # Will be set to 1 if no controller found
+            threads: nil,  # Defaults to 1
             name: nil,
             interval: 1.0,
             from_controller: nil
@@ -70,12 +70,10 @@ module Takagi
           ConfigContext.new(self).instance_eval(&block) if block
         end
 
-        # Inherit settings from a controller
+        # Associates this reactor with a controller for its default NAME only. The reactor owns
+        # its thread pool; concurrency is never inherited from a controller.
         #
-        # Associates this reactor with a controller for thread pool sharing.
-        # Does NOT set threads in config to allow automatic pool sharing.
-        #
-        # @param controller_class [Class] Controller class to inherit from
+        # @param controller_class [Class] Controller class to take a default name from
         #
         # @example
         #   class TelemetryReactor < Takagi::Observable::Reactor
@@ -83,7 +81,6 @@ module Takagi
         #   end
         def inherit_from(controller_class)
           config[:from_controller] = controller_class
-          # Only set name, NOT threads (to allow pool sharing)
           config[:name] ||= "#{controller_class.name.split('::').last.downcase.gsub('controller', '')}-reactor"
         end
 
@@ -124,67 +121,19 @@ module Takagi
       end
 
       def initialize(threads: nil, name: nil, interval: nil)
-        # Auto-detect controller by naming convention
         auto_inherit_from_controller unless self.class.config[:from_controller]
 
-        # Merge class config with instance overrides
         class_config = self.class.config
-        controller = class_config[:from_controller]
+        @config = {
+          threads: threads || class_config[:threads] || 1,
+          name: name || class_config[:name] || default_reactor_name,
+          interval: interval || class_config[:interval] || 1.0
+        }
 
-        Takagi.logger.debug "Initializing reactor: #{self.class.name}"
-        Takagi.logger.debug "  Associated controller: #{controller&.name || 'none'}"
-        Takagi.logger.debug "  Explicit threads param: #{threads.inspect}"
-        Takagi.logger.debug "  Class config threads: #{class_config[:threads].inspect}"
+        @thread_pool = Takagi::ThreadPool.new(size: @config[:threads], name: @config[:name])
 
-        # Determine if we should share controller's thread pool
-        # Share if: controller exists AND no explicit thread configuration
-        should_share_pool = controller && threads.nil? && class_config[:threads].nil?
-
-        if should_share_pool
-          Takagi.logger.debug "  Decision: Share thread pool with controller"
-
-          # Share controller's thread pool (lazy initialization)
-          @thread_pool = controller.thread_pool
-          @shared_pool = true
-
-          @config = {
-            threads: @thread_pool.size,
-            name: name || class_config[:name] || default_reactor_name,
-            interval: interval || class_config[:interval] || 1.0
-          }
-
-          Takagi.logger.info "Reactor '#{@config[:name]}' sharing thread pool with #{controller.name} (#{@thread_pool.size} threads)"
-          Takagi.logger.debug "  Shared pool object_id: #{@thread_pool.object_id}"
-        else
-          Takagi.logger.debug "  Decision: Create independent thread pool"
-
-          # Create independent thread pool
-          @shared_pool = false
-
-          @config = {
-            threads: threads || class_config[:threads] || 1,
-            name: name || class_config[:name] || default_reactor_name,
-            interval: interval || class_config[:interval] || 1.0
-          }
-
-          @thread_pool = Controller::ThreadPool.new(
-            size: @config[:threads],
-            name: @config[:name]
-          )
-
-          reason = if !controller
-                     "no associated controller"
-                   elsif threads
-                     "explicit threads parameter (#{threads})"
-                   elsif class_config[:threads]
-                     "explicit class configuration (#{class_config[:threads]} threads)"
-                   else
-                     "unknown reason"
-                   end
-
-          Takagi.logger.info "Reactor '#{@config[:name]}' created independent thread pool (#{@config[:threads]} threads) - #{reason}"
-          Takagi.logger.debug "  Independent pool object_id: #{@thread_pool.object_id}"
-        end
+        Takagi.logger.info "Reactor '#{@config[:name]}' created a #{@config[:threads]}-thread pool"
+        Takagi.logger.debug "  Pool object_id: #{@thread_pool.object_id}"
 
         @observables = {}
         @observers = {}
@@ -424,21 +373,10 @@ module Takagi
       def stop
         return unless @running
 
-        Takagi.logger.debug "Stopping reactor: #{@config[:name]}"
-        Takagi.logger.debug "  Shared pool: #{@shared_pool}"
-
         @running = false
         @watcher.stop if @watcher
-
-        # Only shutdown thread pool if we own it (not shared)
-        if @shared_pool
-          Takagi.logger.debug "  Skipping thread pool shutdown (shared with controller)"
-          Takagi.logger.info "Reactor '#{@config[:name]}' stopped (thread pool remains active for controller)"
-        else
-          Takagi.logger.debug "  Shutting down independent thread pool"
-          @thread_pool.shutdown
-          Takagi.logger.info "Reactor '#{@config[:name]}' stopped (thread pool shutdown)"
-        end
+        @thread_pool.shutdown
+        Takagi.logger.info "Reactor '#{@config[:name]}' stopped (thread pool shutdown)"
       end
 
       # Check if reactor is running
@@ -448,25 +386,11 @@ module Takagi
         @running
       end
 
-      # Check if reactor is sharing a thread pool with its controller
-      #
-      # @return [Boolean]
-      def shared_pool?
-        @shared_pool || false
-      end
-
       private
 
       # Schedules observer work in the reactor's pool only when that pool lives in THIS process,
-      # and otherwise runs it in the calling thread.
-      #
-      # A reactor that shares a controller's pool holds the pool OBJECT, and a forked child
-      # inherits that object with its threads already gone (threads do not survive `fork`), so a
-      # plain `ThreadPool#schedule` there pushes work into a queue whose drainer died - the
-      # notification vanishes with no trace and the side effect never happens (row 26 of
-      # .omo/plans/tcp-multi-worker.md). The request path refuses to do that - a forked UDP worker
-      # serves synchronously when `Controller#workers_running?` is false - so a child does the same
-      # here and the side effect still happens exactly once.
+      # and otherwise runs it in the calling thread. Threads do not survive `fork`, so a child
+      # that scheduled into an inherited pool would push work into a queue whose drainer died.
       def schedule_in_pool(&block)
         return @thread_pool.schedule(&block) if @thread_pool.running_in_this_process?
 

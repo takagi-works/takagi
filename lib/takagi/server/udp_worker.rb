@@ -173,35 +173,10 @@ module Takagi
 
         return unless routable_request?(inbound_request)
 
-        # Delegate to controller's thread pool if available
-        delegate_to_controller_pool(inbound_request, addr)
+        process_request(inbound_request, addr, source_endpoint)
       rescue Takagi::Message::ParseError => e then @logger.debug "Ignoring malformed datagram from #{addr[3]}:#{addr[1]}: #{e.inspect}"
       rescue StandardError => e
         @logger.error "Handle_request failed: #{e.message}"
-      end
-
-      def delegate_to_controller_pool(inbound_request, addr)
-        # Find which controller handles this path
-        path = inbound_request.uri.path
-        controller_class = find_controller_for_path(path)
-
-        if controller_class&.workers_running?
-          # Delegate to controller's thread pool
-          @logger.debug "Delegating #{path} to #{controller_class.name} worker pool"
-          source_endpoint = "#{addr[3]}:#{addr[1]}"
-
-          controller_class.schedule do
-            process_request(inbound_request, addr, source_endpoint)
-          end
-        else
-          # No pool running IN THIS PROCESS - either none was started, or this worker was
-          # forked after the parent started one, in which case the pool's threads died with
-          # the fork and its queue has no drainer. Process synchronously (backward
-          # compatible), so the client always gets a response.
-          @logger.debug "Processing #{path} synchronously (no controller pool in this process)"
-          source_endpoint = "#{addr[3]}:#{addr[1]}"
-          process_request(inbound_request, addr, source_endpoint)
-        end
       end
 
       def process_request(inbound_request, addr, source_endpoint)
@@ -218,14 +193,6 @@ module Takagi
         transmit(response, addr)
       rescue StandardError => e
         @logger.error "Process_request failed: #{e.message}"
-      end
-
-      def find_controller_for_path(path)
-        # If using a CompositeRouter, find the controller
-        # Otherwise return nil (backward compatible with single Router)
-        return nil unless @router&.respond_to?(:find_controller_for_path)
-
-        @router.find_controller_for_path(path)
       end
 
       def log_inbound_request(inbound_request)

@@ -7,17 +7,17 @@ module Takagi
   # performance tuning without manual process/thread configuration.
   #
   # @example Using a profile
-  #   class TelemetryController < Takagi::Controller
+  #   class MyApp < Takagi::Application
   #     configure do
   #       profile :high_throughput
   #     end
   #   end
   #
   # @example Profile with overrides
-  #   class TelemetryController < Takagi::Controller
+  #   class MyApp < Takagi::Application
   #     configure do
   #       profile :high_throughput
-  #       set :processes, 16  # Override default
+  #       processes 16  # Override the profile's default
   #     end
   #   end
   module Profiles

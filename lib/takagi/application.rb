@@ -10,6 +10,8 @@ module Takagi
   #   class MyApp < Takagi::Application
   #     configure do
   #       load_controllers TelemetryController, ConfigController
+  #       threads 8
+  #       processes 2
   #     end
   #   end
   #
@@ -24,6 +26,12 @@ module Takagi
   #
   #   MyApp.run!
   class Application
+    # The service lifecycle an Application shares with Base: boot the configuration, build one
+    # transport per protocol with the SERVICE's own router and stack, announce the service, and
+    # serve. Plugin management comes with it, because `enable_plugins!` is part of that lifecycle.
+    extend Base::ServerLifecycle
+    extend Base::PluginManagement
+
     # Internal controller for CoRE Link Format discovery endpoint
     # Automatically mounted by Application
     class DiscoveryController < Controller
@@ -74,9 +82,76 @@ module Takagi
         @config ||= {
           controllers: [],
           auto_load_patterns: [],
-          allocation_mode: :automatic,  # :manual or :automatic
-          total_threads: nil             # For automatic mode
+          profile: nil,
+          threads: nil,
+          processes: nil,
+          port: nil,
+          protocols: nil,
+          bind_address: nil,
+          max_connections: nil,
+          protocol_settings: nil
         }
+      end
+
+      # The concurrency and transport settings this SERVICE carries. A profile stands in for
+      # anything not written explicitly; the lifecycle falls back to Takagi.config for what is
+      # still absent here.
+      #
+      # @return [Hash{Symbol => Object}]
+      def service_settings
+        profile = config[:profile] ? (Profiles.get(config[:profile]) || {}) : {}
+        {
+          threads: config[:threads] || profile[:threads],
+          processes: config[:processes] || profile[:processes],
+          port: config[:port],
+          protocols: config[:protocols],
+          bind_address: config[:bind_address],
+          max_connections: config[:max_connections],
+          protocol_settings: config[:protocol_settings]
+        }.compact
+      end
+
+      # The middleware stack this service runs: its OWN stack, resolving through the composite
+      # router. The shared process stack resolves through `Takagi::Router.instance`, which knows
+      # none of the mounted controllers, so an Application served through it would answer 4.04.
+      #
+      # @return [MiddlewareStack]
+      def middleware_stack
+        @middleware_stack ||= Takagi::MiddlewareStack.build(router: router)
+      end
+
+      # Adds a middleware to this application's stack.
+      #
+      # @param middleware [Object] Middleware instance responding to #call
+      # @return [void]
+      def use(middleware)
+        middleware_stack.use(middleware)
+      end
+
+      # The controller that holds routes registered directly on the application - the surface
+      # `MyApp.get '/health'` and a plugin's route registration both use. It mounts at `/`, so a
+      # controller's own mount path always wins the longest-prefix match.
+      #
+      # @return [Class] an anonymous Controller subclass
+      def root_controller
+        @root_controller ||= Class.new(Controller).tap { |controller| controller.configure { mount '/' } }
+      end
+
+      CoAP::Registries::Method.all.each_value do |method_name|
+        method_string = method_name.split.first
+        method_symbol = method_string.downcase.to_sym
+
+        define_method(method_symbol) do |path, metadata: {}, &block|
+          root_controller.add_route(method_string, path, metadata: metadata, &block)
+        end
+      end
+
+      # Registers an observable route directly on the application.
+      #
+      # @param path [String] Resource path
+      # @param metadata [Hash] Additional CoRE metadata
+      def observable(path, metadata: {}, &block)
+        root_controller.observable(path, metadata: metadata, &block)
       end
 
       # Configure the application
@@ -87,15 +162,20 @@ module Takagi
       #   configure do
       #     load_controllers TelemetryController, ConfigController
       #     auto_load 'app/controllers/**/*_controller.rb'
+      #     threads 8
+      #     processes 2
       #   end
       def configure(&block)
         ConfigContext.new(self).instance_eval(&block) if block
       end
 
-      # Load and mount all registered controllers
+      # Load and mount all registered controllers. Idempotent: the lifecycle calls it at boot and
+      # a caller may already have done so, and mounting twice would duplicate every route.
       #
       # @return [void]
       def load_controllers!
+        return if @controllers_loaded
+
         # Load auto-discovered controllers
         auto_load_controllers! if config[:auto_load_patterns].any?
 
@@ -104,87 +184,38 @@ module Takagi
         DiscoveryController.app_router = router
         router.mount(DiscoveryController)
 
+        # Application-level routes live at the root, under every controller's own mount.
+        router.mount(root_controller)
+
         # Mount all registered controllers
         config[:controllers].each do |controller_class|
           router.mount(controller_class)
         end
+
+        @controllers_loaded = true
       end
 
-      # Start worker thread pools for all controllers
+      # Prepares the service before the lifecycle builds any transport: the controllers are
+      # mounted HERE, in the process that boots, so every transport resolves through the
+      # composite router from its first request.
       #
-      # Allocates thread pool resources based on allocation_mode:
-      # - :manual - Controllers use their explicit thread_count or profile settings
-      # - :automatic - Divides total_threads proportionally by profile weights
-      #
+      # @param config_path [String] Path to configuration file
       # @return [void]
-      def start_all_workers!
-        # Use app config first, fall back to global config
-        mode = config[:allocation_mode] || Takagi.config.allocation.mode
-        total_threads = config[:total_threads] || Takagi.config.allocation.total_threads
-        controllers_to_allocate = config[:controllers] + [DiscoveryController]
-
-        # Calculate allocations based on mode. The allocation is protocol-neutral: what a
-        # controller gets here is the thread count for its own pool, and a worker process
-        # count is the server's business (a worker serves a whole transport), so the loop
-        # below reads `[:threads]` and nothing else.
-        allocations = Controller::ResourceAllocator.allocate(
-          controllers: controllers_to_allocate,
-          mode: mode,
-          total_threads: total_threads
-        )
-
-        # Validate allocations if automatic mode with total_threads specified
-        if mode == :automatic && total_threads
-          Controller::ResourceAllocator.validate!(allocations, total_threads: total_threads)
-        end
-
-        # Start each controller's thread pool. A controller with nothing to run is not
-        # skipped by accident: the allocator falls back to the minimal profile's thread
-        # count whenever the controller declares none (a `processes`-only controller
-        # included), so `threads` is only nil for a caller that bypassed the allocator.
-        allocations.each do |controller_class, allocation|
-          threads = allocation[:threads]
-          next unless threads && threads > 0
-
-          controller_class.start_workers!(
-            threads: threads,
-            name: controller_class.name.split('::').last
-          )
-
-          Takagi.logger.info "Allocated #{threads} threads to #{controller_class.name} (mode: #{mode})"
-        end
-      end
-
-      # Shutdown all controller worker thread pools
-      #
-      # @return [void]
-      def shutdown_all_workers!
-        all_controllers = config[:controllers] + [DiscoveryController]
-
-        all_controllers.each do |controller_class|
-          controller_class.shutdown_workers! if controller_class.workers_running?
-        end
-      end
-
-      # Run the application server
-      #
-      # @param options [Hash] Server options (port, protocols, etc.)
-      # @return [void]
-      #
-      # @example
-      #   MyApp.run!(port: 5683, protocols: [:udp, :tcp])
-      def run!(**options)
-        # Load all controllers
+      def boot!(config_path: 'config/takagi.yml')
+        super
         load_controllers!
+      end
 
-        # Start controller worker pools
-        start_all_workers!
-
-        # Use the composite router instead of global singleton
-        options[:router] = router
-
-        # Delegate to server lifecycle (same as Takagi::Base)
-        Base::ServerLifecycle.run!(**options)
+      # Spawns the application's servers in background threads, with its controllers already
+      # loaded. Concurrency comes from this service's settings (`threads`/`processes`, a profile,
+      # or Takagi.config), never from a controller.
+      #
+      # @param port [Integer, nil] Port to bind to (uses the service config if nil)
+      # @param protocols [Array<Symbol>, nil] Protocols to enable (uses the service config if nil)
+      # @return [Server, Multi] The spawned server instance
+      def spawn!(port: nil, protocols: nil)
+        load_controllers!
+        super
       end
 
       # Get all loaded controller classes
@@ -234,27 +265,81 @@ module Takagi
         @app.config[:auto_load_patterns] << pattern
       end
 
-      # Configure worker allocation mode
+      # Set the service's concurrency and transport settings. A profile supplies defaults; an
+      # explicit `threads`/`processes` always wins over it.
       #
-      # @param mode [Symbol] :manual or :automatic
-      # @param threads [Integer] Total threads for automatic mode
-      #
-      # @example Manual allocation (controllers specify their own thread counts)
-      #   allocation :manual
-      #
-      # @example Automatic allocation (divide 40 threads among controllers)
-      #   allocation :automatic, threads: 40
-      def allocation(mode, threads: nil)
-        unless [:manual, :automatic].include?(mode)
-          raise ArgumentError, "Invalid allocation mode: #{mode}. Use :manual or :automatic"
+      # @example
+      #   profile :high_throughput
+      #   threads 8
+      #   processes 2
+      #   port 5683
+      #   protocols :udp, :tcp
+      #   protocol_settings tcp: { max_connections: 200 }
+      def profile(name)
+        unless Profiles.exists?(name)
+          error = Errors::ConfigurationError.invalid_profile(name, Profiles.available)
+          raise ArgumentError, error.message
         end
 
-        if mode == :automatic && threads.nil?
-          raise ArgumentError, "Automatic allocation requires threads: parameter"
-        end
+        @app.config[:profile] = name
+      end
 
-        @app.config[:allocation_mode] = mode
-        @app.config[:total_threads] = threads
+      def threads(count)
+        raise ArgumentError, Errors::ValidationError.invalid_thread_count(count).message unless count.is_a?(Integer) && count.positive?
+
+        @app.config[:threads] = count
+      end
+
+      def processes(count)
+        raise ArgumentError, Errors::ValidationError.invalid_process_count(count).message unless count.is_a?(Integer) && count.positive?
+
+        @app.config[:processes] = count
+      end
+
+      def port(value)
+        number = Integer(value)
+        raise ArgumentError, "port must be in 0..65535: #{value.inspect}" unless (0..65_535).cover?(number)
+
+        @app.config[:port] = number
+      end
+
+      def protocols(*list)
+        values = list.flatten.map(&:to_sym)
+        raise ArgumentError, 'at least one protocol is required' if values.empty?
+
+        @app.config[:protocols] = values
+      end
+
+      def bind_address(value)
+        @app.config[:bind_address] = value.to_s
+      end
+
+      def max_connections(count)
+        raise ArgumentError, "max_connections must be a positive Integer: #{count.inspect}" unless count.is_a?(Integer) && count.positive?
+
+        @app.config[:max_connections] = count
+      end
+
+      def protocol_settings(settings)
+        raise ArgumentError, "protocol_settings must be a Hash: #{settings.inspect}" unless settings.is_a?(Hash)
+
+        @app.config[:protocol_settings] = settings.to_h do |protocol, options|
+          [protocol.to_sym, (options || {}).to_h { |key, value| [key.to_sym, value] }]
+        end
+      end
+
+      # The `set` spelling for parity with the rest of the DSL.
+      def set(key, value)
+        case key.to_sym
+        when :threads then threads(value)
+        when :processes then processes(value)
+        when :port then port(value)
+        when :protocols then protocols(value)
+        when :bind_address then bind_address(value)
+        when :max_connections then max_connections(value)
+        when :protocol_settings then protocol_settings(value)
+        else raise ArgumentError, "unknown service setting #{key.inspect}"
+        end
       end
     end
   end

@@ -1,20 +1,18 @@
 # frozen_string_literal: true
 
-require_relative 'controller/thread_pool'
-require_relative 'controller/resource_allocator'
 require_relative 'hooks'
 
 module Takagi
-  # Base class for modular controllers with isolated routers
+  # Base class for modular controllers with isolated routers.
   #
-  # Controllers provide route isolation, independent process pools, and
-  # nested mounting capabilities for building scalable CoAP applications.
+  # Controllers provide route isolation and nested mounting for modular CoAP services.
+  # Concurrency belongs to the SERVICE - the Application's `threads`/`processes`, or the
+  # Takagi configuration - never to a controller.
   #
   # @example Simple controller
   #   class TelemetryController < Takagi::Controller
   #     configure do
   #       mount '/telemetry'
-  #       profile :high_throughput
   #     end
   #
   #     post '/data' do
@@ -33,7 +31,6 @@ module Takagi
   #   class DevicesController < Takagi::Controller
   #     configure do
   #       mount '/devices'
-  #       profile :high_throughput
   #     end
   #   end
   class Controller
@@ -58,10 +55,7 @@ module Takagi
         @config ||= {
           mount_path: nil,
           nested_from: nil,
-          nested_controllers: [],
-          profile: nil,
-          processes: nil,
-          threads: nil
+          nested_controllers: []
         }
       end
 
@@ -72,8 +66,6 @@ module Takagi
       # @example
       #   configure do
       #     mount '/telemetry'
-      #     profile :high_throughput
-      #     set :processes, 16
       #   end
       def configure(&block)
         ConfigContext.new(self).instance_eval(&block) if block
@@ -141,114 +133,6 @@ module Takagi
       def nested_controllers
         config[:nested_controllers]
       end
-
-      # Get the load profile name
-      #
-      # @return [Symbol, nil] Profile name or nil
-      def profile_name
-        config[:profile]
-      end
-
-      # Get the effective process count
-      #
-      # Uses explicit :processes config, falls back to profile, or nil.
-      #
-      # @return [Integer, nil] Number of processes
-      def process_count
-        config[:processes] || profile_config[:processes]
-      end
-
-      # Get the effective thread count
-      #
-      # Uses explicit :threads config, falls back to profile, or nil.
-      #
-      # @return [Integer, nil] Number of threads
-      def thread_count
-        config[:threads] || profile_config[:threads]
-      end
-
-      # Get or create the controller's thread pool
-      #
-      # Lazy initialization: creates pool on first access if not already started.
-      # This allows reactors to share the controller's pool automatically.
-      #
-      # This pool is what a controller's `threads` buys: its own work, and nothing else. No
-      # server-wide value overrides it, and neither transport serves a request from it in
-      # place of its own serving path - a UDP worker delegates a request whose path maps to
-      # this controller (see Server::UdpWorker#delegate_to_controller_pool), while TCP keeps
-      # the connection-thread model, where one thread per connection reads and writes in
-      # order (see Server::Tcp#build_response). A forked worker does NOT get a pool of its
-      # own: threads do not survive `fork`, and a per-child pool would cost memory on a
-      # constrained device while still being per process, so the child serves synchronously
-      # instead.
-      #
-      # @return [ThreadPool] Thread pool instance
-      def thread_pool
-        @thread_pool ||= begin
-          Takagi.logger.debug "Lazy-initializing thread pool for #{name}"
-          start_workers!
-        end
-      end
-
-      # Start the controller's worker thread pool
-      #
-      # @param threads [Integer] Number of threads to allocate
-      # @param name [String] Pool name (defaults to controller class name)
-      # @return [ThreadPool] The started thread pool
-      def start_workers!(threads: nil, name: nil)
-        threads ||= thread_count || 4  # Default to 4 threads
-        name ||= self.name.split('::').last  # e.g., "IngressController"
-
-        @thread_pool = ThreadPool.new(size: threads, name: name)
-        Takagi.logger.info "Started worker pool for #{name} with #{threads} threads"
-        Takagi::Hooks.emit(:controller_workers_started, controller: self, name: name, threads: threads)
-        @thread_pool
-      end
-
-      # Shutdown the controller's worker thread pool
-      def shutdown_workers!
-        return unless @thread_pool
-
-        Takagi.logger.info "Shutting down worker pool for #{name}"
-        Takagi::Hooks.emit(:controller_workers_stopped, controller: self)
-        @thread_pool.shutdown
-        @thread_pool = nil
-      end
-
-      # Schedule a job to run in the controller's thread pool
-      #
-      # @yield Block to execute in worker thread
-      # @raise [ThreadPoolError] if thread pool not started
-      def schedule(&block)
-        unless @thread_pool
-          error = Errors::ThreadPoolError.not_started(name)
-          raise error
-        end
-
-        @thread_pool.schedule(&block)
-      end
-
-      # Check if the controller's thread pool is running IN THIS PROCESS
-      #
-      # Object existence and the shutdown flag are not enough: a forked child inherits the
-      # pool object with its threads already gone, and a child that scheduled into it would
-      # leave the client with neither a response nor an error - the queue has no drainer.
-      #
-      # @return [Boolean] true if thread pool is active in this process
-      def workers_running?
-        @thread_pool && !@thread_pool.shutdown? && @thread_pool.running_in_this_process?
-      end
-
-      private
-
-      # Get the profile configuration
-      #
-      # @return [Hash] Profile configuration or empty hash
-      def profile_config
-        return {} unless config[:profile]
-
-        Profiles.get(config[:profile]) || {}
-      end
     end
 
     # Configuration DSL context
@@ -285,70 +169,6 @@ module Takagi
         controllers.each do |controller|
           controller.config[:nested_from] = @controller
         end
-      end
-
-      # Set a load profile for this controller
-      #
-      # @param name [Symbol] Profile name
-      #
-      # @example
-      #   profile :high_throughput
-      def profile(name)
-        unless Profiles.exists?(name)
-          error = Errors::ConfigurationError.invalid_profile(name, Profiles.available)
-          raise ArgumentError, error.message
-        end
-
-        @controller.config[:profile] = name
-      end
-
-      # Set the number of threads for this controller
-      #
-      # @param count [Integer] Number of threads
-      #
-      # @example
-      #   threads 8
-      def threads(count)
-        unless count.is_a?(Integer) && count.positive?
-          error = Errors::ValidationError.invalid_thread_count(count)
-          raise ArgumentError, error.message
-        end
-
-        @controller.config[:threads] = count
-      end
-
-      # Set a configuration value
-      #
-      # @param key [Symbol] Configuration key
-      # @param value [Object] Configuration value
-      # @raise [ArgumentError] when the key cannot apply to a controller (`max_connections`)
-      #
-      # @example
-      #   set :processes, 16
-      #   set :threads, 4
-      def set(key, value)
-        reject_unconsumable!(key, value)
-        @controller.config[key] = value
-      end
-
-      private
-
-      # A controller holds no accepted connections, so `max_connections` - a SERVER setting, the
-      # TCP server's per-worker accepted-connection cap - has nothing to cap when it is written on
-      # a controller, and no code reads it back (row 21 of .omo/plans/tcp-multi-worker.md).
-      # Accepting it would be a silent drop, so it is refused here, naming the controller and the
-      # reason. `set :threads` stays accepted and is consumed by the controller's own pool;
-      # `set :processes` stays accepted for compatibility - nothing consumes it (IS-7).
-      def reject_unconsumable!(key, value)
-        return unless key.to_sym == :max_connections
-
-        raise ArgumentError,
-              "`set :max_connections, #{value.inspect}` cannot apply to controller " \
-              "#{@controller.name}: a controller holds no accepted connections, so nothing " \
-              'consumes it - `max_connections` is a server-level setting, the TCP server\'s ' \
-              'per-worker accepted-connection cap. Write it for the server that accepts ' \
-              'connections instead: `protocol_settings: { tcp: { max_connections: <N> } }` ' \
-              'in takagi.yml.'
       end
     end
   end

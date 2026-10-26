@@ -213,7 +213,7 @@ threads: 4
 max_connections: 100
 ```
 
-Concurrency has two scopes. `processes` is the service's ONE worker count: the cluster forks that many OS processes and every transport the service exposes is served by all of them, so it is not a per-transport knob. `threads` sizes a serving pool inside each process, and `max_connections` caps accepted connections. Only `max_connections` is TCP-specific, because UDP has no accepted-connection notion. A controller cannot take `max_connections`: it holds no accepted connections, so `set :max_connections, N` is refused rather than accepted and ignored (see [Per-worker connection cap](#per-worker-connection-cap-max_connections)).
+Concurrency has two scopes. `processes` is the service's ONE worker count: the cluster forks that many OS processes and every transport the service exposes is served by all of them, so it is not a per-transport knob. `threads` sizes a serving pool inside each process, and `max_connections` caps accepted connections. Only `max_connections` is TCP-specific, because UDP has no accepted-connection notion. A controller carries no concurrency setting at all; set these on the service (an Application's `configure` block, or the top-level keys in `takagi.yml`). See [Per-worker connection cap](#per-worker-connection-cap-max_connections).
 
 ### One worker count per service (`processes`)
 
@@ -298,17 +298,37 @@ The count semantics changed. Before this change a protocol could fork its own nu
 
 ### Threads (`threads`)
 
-`threads` exists on two levels that do not compete: a server's serving pool, and a controller's own pool.
+`threads` exists on two levels that do not compete: the SERVICE's concurrency, and a transport's
+serving pool. A controller carries no concurrency setting at all.
 
-**Server level.** UDP's readers always take the resolved value, that is `protocol_settings[:udp][:threads]` when written and the global `threads` otherwise. The TCP handler pool is opt-in on the protocol's OWN key: only a written `protocol_settings[:tcp][:threads]` opens one, because putting a bounded pool under a deployment that wrote only the global value would change how it serves (`server_lifecycle.rb:155`, `:170`). Thread-per-connection stays the default TCP shape; `protocol_settings[:tcp][:threads]` is how a dual-transport service asks for a bounded TCP pool.
+**Server level.** UDP's readers always take the resolved value, that is `protocol_settings[:udp][:threads]` when written and the service's `threads` (or the global one) otherwise. The TCP handler pool is opt-in on the protocol's OWN key: only a written `protocol_settings[:tcp][:threads]` opens one, because putting a bounded pool under a deployment that wrote only the global value would change how it serves (`server_lifecycle.rb:155`, `:170`). Thread-per-connection stays the default TCP shape; `protocol_settings[:tcp][:threads]` is how a dual-transport service asks for a bounded TCP pool.
 
 When a pool is open it is bounded: that many threads pull accepted sockets from a queue and run the same handler the thread-per-connection model runs, and a connection that finds every thread busy waits in the queue rather than being refused. Two configurations keep today's thread-per-connection SERVING model unchanged: `threads` unset (no pool is started), or `threads` at or above `max_connections` (such a pool could not bound concurrency below what the connection cap already bounds) - `tcp.rb:390-395`. Serving is identical; the stop path is not. A thread-per-connection server now drains its in-flight connections against the declared `1.0` s deadline before it exits (`drain_connections`, `tcp.rb:354`), where before the fix it dropped them at about `0.10` s: measured, the PRE bytes lost the response with the children gone at `0.1013` s, while the shipped bytes deliver that response at `0.3049` s with the child exiting at `0.3073` s, inside the deadline (`.omo/evidence/task-13-verification-unified-cluster.txt`, md5 `e10b98a81223ca79a3bad3324cd450d9`).
 
-**Controller level.** A controller's own `threads` (its `set :threads, N`, or its profile's count) is its own pool; no server-wide value overrides it, and it is the per-endpoint lever (`controller.rb:152-168`). The allocation that starts those pools reads `[:threads]` and nothing else, so a `processes` value declared on a controller is not a worker count (`application.rb:126-155`, `resource_allocator.rb:88-104`).
+**Service level.** An `Application` declares its concurrency in its own `configure` block, and the values feed every transport it builds:
+
+```ruby
+class MyApp < Takagi::Application
+  configure do
+    profile :high_throughput   # optional defaults (processes: 8, threads: 4)
+    processes 2                # explicit values win over the profile
+    threads 8
+    port 5683
+    protocols :udp, :tcp
+    bind_address '0.0.0.0'
+    max_connections 200
+    protocol_settings tcp: { threads: 8 }
+  end
+end
+```
+
+A `Takagi::Base` service has no `configure` block; it reads the same keys from `takagi.yml`
+(`processes`, `threads`, `protocol_settings`, ...). Either way the knobs are the SERVICE's: there is
+no per-controller pool, profile, or process count any more.
 
 ### Per-worker connection cap (`max_connections`)
 
-`max_connections` governs the **TCP server only**: UDP has no accepted-connection notion, and a UDP server is never given the key (`server_lifecycle.rb:163`). A controller can never carry this key: `set :max_connections, N` raises `ArgumentError` naming the controller and the reason, because a controller holds no accepted connections and no code reads it back (`controller.rb:336-352`), while the server-level `max_connections` documented here is the TCP server's per-worker accepted-connection cap.
+`max_connections` governs the **TCP server only**: UDP has no accepted-connection notion, and a UDP server is never given the key (`server_lifecycle.rb:163`). It is a service setting (`max_connections 200` in an Application's `configure` block, or the top-level key in `takagi.yml`); a controller carries no concurrency setting at all.
 
 Under more than one worker the number is **per worker**, so the effective ceiling of one server is `worker_processes x max_connections`. Each worker counts only the connections it accepted and served, and the master counts none - there is no cross-process counter, so this is a per-worker guarantee and never a global one (`tcp.rb:404-419`).
 
@@ -380,9 +400,9 @@ Both transports are served by the same cluster, which forks the workers (`cluste
 
 1. **Its own connection accounting.** The `max_connections` counter is per serving process: it is initialised on the server instance (`tcp.rb:124-125`), incremented and released only by the process that accepts and serves (`tcp.rb:404-419`), and the master never accepts at all - the cluster's supervision loop forks and reaps and never enters the accept loop (`cluster.rb:261`) - so a child starts from zero. No counter is shared and none needs to be, so the ceiling stays `worker_processes x max_connections` and never becomes global. Measured by the multi-worker specs, which hold `2 x 1` and then `2 x 2` connections at once from distinct worker pids while the master's own count stays `0` (`spec/unit/tcp_workers_spec.rb:1182-1256` - the `assert_worker_cap` helper and its two `worker_processes: 2` examples, with the master's own counter asserted at `:1216`).
 2. **`Observable::Registry` and `Observer::Watcher` are parent-owned and absent in a child.** Both drive their work on threads - the watcher starts one (`observer/watcher.rb:13-17`) and the registry starts only what it already holds (`observable/registry.rb:47-64`) - and threads do not survive `fork`. A forked child never starts them in any case: `@watcher.start` appears only in `start_service_hooks!` (`tcp.rb:67`), which a service's fan-out calls once in the booting process (`multi.rb:56-60`), while a forked child runs `serve_all` (`cluster.rb:174`) into the transport's `serve_loop`, which for TCP is `accept_loop` (`tcp.rb:234`). One layer down it is the same story: hooks are delivered through the EventBus thread executor (`hooks.rb:51-78`) whose `running?` is a flag rather than a liveness check (`event_bus/async_executor.rb:30`, `:39`), so a child still answers "ready" while every executor thread is dead and a published hook lands in a queue with no drainer. Measured in a forked child: `Thread.list.size == 1`, all ten executor threads `alive? == false`, `Observable::Registry.registered?(:probe)` still answered `true` and the reactor still answered `running? == true` (the parent's flag, inherited as data), and a published hook raised the executor queue to 1 without its subscriber ever being called. The practical consequence is the one to remember: `:server_starting` and `:server_stopped` are emitted by the master's own `run!` (`tcp.rb:155`, `:193`; `udp.rb:103`, `:136`), which a child never calls, so they describe the master. Measured with three TCP workers: the hook fired twice, both times from the master's pid, while all three worker pids emitted nothing (a control child that deliberately emits is observed, so the channel is live in a child).
-3. **A child inherits a controller pool object whose threads are dead, and its own copy of the Block1 assembly table.** The Block1 table is per process (see [Block-Wise Transfer Configuration](#block-wise-transfer-configuration)), and a controller pool is worse than absent in a child: it exists as an object whose threads died with the fork. `ThreadPool` records the pid that created it (`controller/thread_pool.rb:30`), `running_in_this_process?` reports that honestly (`:86-88`) and `Controller#workers_running?` asks it (`controller.rb:238`). The request path respects that answer - a forked UDP worker serves synchronously instead of queueing into a queue nobody drains (`udp_worker.rb:182-190`), and TCP runs the handler body directly rather than through a controller pool (`tcp.rb:295`) - and the reactor now asks the same question before it schedules, so a forked child runs observer work in the calling thread instead of queueing it into a pool whose drainer died (`observable/reactor.rb:470-477`, see [Observability](#observability)). Because the table and the pools are per process, a multi-worker TCP deployment carries a **narrower** version of the 4.08 exposure the UDP section describes: a TCP worker owns a connection for that connection's whole lifetime - the accepted socket is handed to exactly one handler (`tcp.rb:273-277`), which then runs that connection to its end (`:295`) - so only a block sequence whose blocks arrive on DIFFERENT connections can be split across workers, while for UDP every datagram of an upload may land on any worker - and the service's `processes` count is what multiplies those UDP workers, so more workers mean proportionally more of that risk. Nothing in this configuration can widen the TCP exposure further: a controller's `threads` sizes a pool, it does not decide which worker serves a connection, and no controller setting can reach the assembly key (`middleware/block_wise.rb:31`). Nor can Takagi's own TCP client create such a split sequence: it reports no block-wise support at all (`tcp_client.rb:88-94`, `block_wise_transport?` is `false`, with RFC 8323 block-wise over TCP deliberately unimplemented), and the TCP server's CSM advertises Max-Message-Size only, withholding Block-Wise-Transfer on purpose (`tcp.rb:582-600`). The exposure is therefore unchanged by any worker count you write, and nothing here raises one behind your back: `processes` is the only source of workers, while a controller's `threads` buys a pool and no longer implies a process count at all (`resource_allocator.rb:59-104` computes thread counts and carries no `:processes` key).
+3. **A child inherits the reactor pools whose threads are dead, and its own copy of the Block1 assembly table.** The Block1 table is per process (see [Block-Wise Transfer Configuration](#block-wise-transfer-configuration)). Every reactor pool is created in the booting process (`observable/reactor.rb`); a child inherits the object but not its threads, `ThreadPool#running_in_this_process?` reports that honestly, and `Reactor#schedule_in_pool` runs the observer work in the calling thread instead of queueing into a queue nobody drains. The datagram request path has no pool to inherit: a UDP worker serves on its own reader thread. `processes` is the only source of workers; a controller carries no concurrency setting. Block-wise over TCP is deliberately unimplemented (the TCP server's CSM advertises Max-Message-Size only, withholding Block-Wise-Transfer on purpose, `tcp.rb:582-600`), so the exposure is unchanged by any worker count you write.
 4. **Its own signal handling, made safe by a sticky flag.** Every serving process answers TERM/INT through the cluster: the master arms `trap('TERM')`/`trap('INT')` before any fork (`cluster.rb:158-160`), and a forked child re-arms the same handlers in its own state reset (`cluster.rb:252`). A stop a SIGNAL asked THIS process for is recorded on the process for its whole life (`@signal_stop`), so it outlives that reset: the child's reset drops the MASTER's stop state but must not drop the child's own stop (`cluster.rb:108`, `:166`). This is the fix for the race where a TERM landing between the fork and the reset was cleared, leaving the worker serving until the master's KILL (`cluster.rb:241-243`).
-5. **No upper bound on a controller's `threads`.** `Controller#start_workers!` builds a pool of exactly the declared size (`controller.rb:198-206`) and profile validation accepts any count `>= 1` (`profiles.rb:138-153`), so a large `threads` allocates that many threads on a small device with no cap. Recorded, not capped here.
+5. **No upper bound on a service's `threads`.** The servers build exactly the declared number of readers/handlers, and profile validation accepts any count `>= 1` (`profiles.rb:138-153`), so a large `threads` allocates that many threads on a small device with no cap. Recorded, not capped here.
 
 ### Observability
 
@@ -394,7 +414,7 @@ observability:
     # - statsd
 ```
 
-**The reactor's pool is ownership-aware (row 26).** A reactor with an associated controller shares that controller's pool OBJECT (`observable/reactor.rb:147`), but it no longer schedules into it blindly: every schedule site (`:295`, `:328`, `:349`, `:383`) goes through `Reactor#schedule_in_pool` (`:470-477`), which asks `ThreadPool#running_in_this_process?` first - the same question the request path asks through `Controller#workers_running?` (`controller.rb:238`, `controller/thread_pool.rb:86-88`) - and only then pushes to the pool. A reactor that declares its own thread count builds an independent pool instead (`observable/reactor.rb:170-173`), created wherever the reactor is constructed - at boot, in the parent - so a child is in the same position. In a forked child the pool's threads are gone, so `reactor.notify` - documented for use from a request handler (`observable/reactor.rb:341-348`) - would have queued work nothing drains; the child now runs the observer work in the calling thread instead, exactly as a forked UDP worker serves a request synchronously (`udp_worker.rb:182-190`), so the notification's side effect still happens exactly once. Measured in a forked child: the pool reported `running_in_this_process? == false` with every pool worker `alive? == false`, and `reactor.notify` then called the observer's own handler inside the child - while in the parent, which owns the pool, the same call is delivered through the pool as before.
+**A reactor owns its pool.** Every reactor builds its own `Takagi::ThreadPool` at construction (`observable/reactor.rb`), and every schedule site goes through `Reactor#schedule_in_pool`, which asks `ThreadPool#running_in_this_process?` first. A forked child inherits the pool object but not its threads, so it runs the observer work in the calling thread instead of queueing into a queue nobody drains. A reactor no longer shares a controller's pool: controllers have none. Measured in a forked child: the pool reported `running_in_this_process? == false` with every pool worker `alive? == false`, and `reactor.notify` then called the observer's own handler inside the child; in the parent the same call is delivered through the pool.
 
 ### Custom Settings
 
@@ -609,7 +629,7 @@ Two limits come from the current implementation. Neither has a built-in fix yet,
 
 ## Proxy Configuration
 
-A proxy sits in front of one or more backends and forwards each request to the one that owns the requested URI namespace. The device talks to the proxy as if it were a single server; the proxy resolves the path and places the request on the outbound hop.
+A proxy sits in front of one or more backends and forwards each request to the one that owns the requested URI namespace. The device talks to the proxy as if it were a single server; the proxy resolves the path and places the request on the outbound hop. For a task-oriented walkthrough of the three mapping modes and discovery, see [guide/proxy.md](guide/proxy.md).
 
 ### Settings
 
@@ -625,7 +645,7 @@ A proxy sits in front of one or more backends and forwards each request to the o
 
 ### Route table
 
-Each route has a `prefix`, a backend `host` and `port`, and an optional `outbound` transport:
+Each route has a backend `host` and `port`, an optional `prefix` (the matcher), an optional `outbound` transport override, and `strip_prefix`:
 
 ```yaml
 proxy:
@@ -646,6 +666,25 @@ proxy:
 ```
 
 **Prefix matching is longest-prefix.** A request for `/sensors/temperature` matches `/sensors` and the relative path `/temperature` is forwarded to that backend. A request for `/sensors` matches the same route with an empty relative path. A request for `/unknown` matches no route and is answered by the proxy's own routes locally.
+
+**Three mapping modes.** The `prefix` selects the backend; `strip_prefix` decides what the backend receives:
+
+```yaml
+proxy:
+  enabled: true
+  routes:
+    - prefix: /telemetry        # namespace mount: /telemetry/hello -> /hello
+      host: 10.0.0.5
+      port: 5683
+    - prefix: /prefix           # transparent mount: /prefix/hello -> /prefix/hello
+      host: 10.0.0.6
+      port: 5683
+      strip_prefix: false
+    - host: 10.0.0.7            # no prefix: any path -> the same path
+      port: 5683
+```
+
+A route with no prefix is the transparent catch-all (it becomes `/` with `strip_prefix: false`); at most one can exist, because two routes cannot claim the same prefix. A prefix-less route that asks for `strip_prefix: true` is refused: stripping `/` would rewrite every request to `/`.
 
 **Two routes cannot claim the same prefix.** The boot fails with a raise naming the duplicate prefix.
 
@@ -672,7 +711,7 @@ The `names` list holds every host, alias and numeric address the proxy answers t
 ### Discovery modes
 
 - **`discovery: local`** — the proxy answers `/.well-known/core` with its own mounted routes only.
-- **`discovery: aggregate`** — the proxy asks every configured backend for its own `/.well-known/core`, merges the answers under each route's prefix, deduplicates identical entries, and returns the combined document. If a backend is unreachable, the answer still contains the reachable ones; the unreachable backend is logged, not surfaced to the client.
+- **`discovery: aggregate`** — the proxy asks every configured backend for its own `/.well-known/core` and merges the answers. A prefixed route moves each entry under the prefix; a `strip_prefix: false` route leaves the backend's paths exactly as advertised, because they are already the public paths. If a backend is unreachable, the answer still contains the reachable ones; the unreachable backend is logged, not surfaced to the client.
 
 ### Refusal and failure codes
 

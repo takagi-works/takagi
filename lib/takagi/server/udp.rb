@@ -110,7 +110,7 @@ module Takagi
         # Started in the MASTER, before the cluster forks. The watcher and the reactors drive
         # their work on threads, and threads do not survive a fork: a child inherits their
         # started flags and no worker ever re-starts them, so the datagram path in a child
-        # stays synchronous (Server::UdpWorker#delegate_to_controller_pool).
+        # serves synchronously on its reader thread.
         start_service_hooks!
 
         @cluster.run!

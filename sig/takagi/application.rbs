@@ -4,8 +4,20 @@ module Takagi
     # Application configuration hash
     type config_hash = {
       controllers: Array[singleton(Controller)],
-      auto_load_patterns: Array[String]
+      auto_load_patterns: Array[String],
+      profile: Symbol?,
+      threads: Integer?,
+      processes: Integer?,
+      port: Integer?,
+      protocols: Array[Symbol]?,
+      bind_address: String?,
+      max_connections: Integer?,
+      protocol_settings: Hash[Symbol, Hash[Symbol, untyped]]?
     }
+
+    # The service lifecycle every Application runs: boot, build one transport per protocol with
+    # this service's router and middleware stack, announce, and serve.
+    extend Base::ServerLifecycle
 
     # Get the application's composite router
     def self.router: () -> CompositeRouter
@@ -13,18 +25,32 @@ module Takagi
     # Get the application's configuration
     def self.config: () -> config_hash
 
+    # The concurrency and transport settings this service carries (explicit values or a profile)
+    def self.service_settings: () -> Hash[Symbol, untyped]
+
+    # The stack this service's transports run: its own, resolving through the composite router
+    def self.middleware_stack: () -> MiddlewareStack
+
+    # Adds a middleware to this application's stack
+    def self.use: (untyped middleware) -> void
+
+    # The controller that holds routes registered directly on the application
+    def self.root_controller: () -> singleton(Controller)
+
+    # Registers an observable route directly on the application
+    def self.observable: (String path, ?metadata: Hash[Symbol, untyped]) { (untyped, untyped) -> untyped } -> void
+
     # Configure the application
     def self.configure: () { (ConfigContext) -> void } -> void
 
-    # Load and mount all registered controllers
+    # Load and mount all registered controllers (idempotent)
     def self.load_controllers!: () -> void
 
-    # Run the application server
-    def self.run!: (
-      ?port: Integer?,
-      ?config_path: String,
-      ?protocols: Array[Symbol]?
-    ) -> void
+    # Prepares the service before any transport is built: controllers mounted
+    def self.boot!: (?config_path: String) -> void
+
+    # Spawns the application's servers in background threads
+    def self.spawn!: (?port: Integer?, ?protocols: Array[Symbol]?) -> untyped
 
     # Get all loaded controller classes
     def self.controllers: () -> Array[singleton(Controller)]
@@ -41,8 +67,30 @@ module Takagi
       # Load specific controller classes
       def load_controllers: (*singleton(Controller) controllers) -> void
 
-      # Auto-load controllers from file pattern
+      # Auto-load controller classes from a glob pattern
       def auto_load: (String pattern) -> void
+
+      # A named profile supplies default processes/threads
+      def profile: (Symbol name) -> void
+
+      # Service-level concurrency
+      def threads: (Integer count) -> void
+
+      def processes: (Integer count) -> void
+
+      # Service-level transport settings
+      def port: (Integer value) -> void
+
+      def protocols: (*Symbol list) -> void
+
+      def bind_address: (String value) -> void
+
+      def max_connections: (Integer count) -> void
+
+      def protocol_settings: (Hash[Symbol, Hash[Symbol, untyped]] settings) -> void
+
+      # The `set` spelling for the same keys
+      def set: (Symbol key, untyped value) -> void
     end
   end
 end

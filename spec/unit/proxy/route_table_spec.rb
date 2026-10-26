@@ -210,4 +210,33 @@ RSpec.describe Takagi::Proxy::RouteTable do
         .to raise_error(ArgumentError, /proxy section is disabled/)
     end
   end
+
+  describe 'transparent routes (strip_prefix)' do
+    it 'forwards the whole path when strip_prefix is false (PROOF)' do
+      match = build_table([route('/prefix', strip_prefix: false)]).resolve('/prefix/hello')
+
+      expect(match.route.strip_prefix?).to be(false)
+      expect(match.relative_path).to eq('/prefix/hello')
+    end
+
+    it 'strips the prefix by default (GUARD)' do
+      match = build_table([route('/prefix')]).resolve('/prefix/hello')
+
+      expect(match.route.strip_prefix?).to be(true)
+      expect(match.relative_path).to eq('/hello')
+    end
+
+    it 'accepts a route with no prefix as the transparent catch-all (PROOF)' do
+      match = build_table([{ host: '127.0.0.1', port: 9001 }]).resolve('/any/deep/path')
+
+      expect(match.route.prefix).to eq('/')
+      expect(match.route.strip_prefix?).to be(false)
+      expect(match.relative_path).to eq('/any/deep/path')
+    end
+
+    it 'refuses a prefix-less route that asks to strip (PROOF)' do
+      expect { build_table([{ host: '127.0.0.1', port: 9001, strip_prefix: true }]) }
+        .to raise_error(ArgumentError, /without a prefix cannot strip/)
+    end
+  end
 end

@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require 'singleton'
 require_relative 'hooks'
 
 module Takagi
@@ -9,10 +8,17 @@ module Takagi
   # Provides a Rack-style middleware chain for request/response processing.
   # Middleware can be configured via Takagi.config.middleware or programmatically.
   #
+  # The process-wide stack is {.instance}; a service with its OWN router (an Application's
+  # CompositeRouter) gets a stack of its own through {.build}, because {#call} resolves the route
+  # through {#router} and the shared instance points at the process-global `Router.instance`.
+  #
   # @example Programmatic configuration
   #   stack = MiddlewareStack.instance
   #   stack.use(Takagi::Middleware::Logging.new)
   #   stack.use(Takagi::Middleware::Caching.new)
+  #
+  # @example A stack of its own for one service
+  #   stack = MiddlewareStack.build(router: app.router)
   #
   # @example YAML configuration (takagi.yml)
   #   middleware:
@@ -23,13 +29,34 @@ module Takagi
   #         options:
   #           ttl: 300
   class MiddlewareStack
-    include Singleton
+    # One stack per process, created once even when two threads first ask together.
+    INSTANCE_MUTEX = Mutex.new
+
+    class << self
+      # The process-wide stack a service that declares no stack of its own runs.
+      #
+      # @return [MiddlewareStack]
+      def instance
+        @instance || INSTANCE_MUTEX.synchronize { @instance ||= new }
+      end
+
+      # A stack of its own for ONE service, routing through `router` and carrying the configured
+      # middleware.
+      #
+      # @param router [Router, CompositeRouter, nil] the router the stack resolves through
+      # @return [MiddlewareStack]
+      def build(router: nil)
+        stack = new
+        stack.router = router if router
+        stack.load_from_config
+        stack
+      end
+    end
 
     attr_reader :middlewares
 
-    # Points the stack at another router. Only specs write this (the proxy specs install a throwaway
-    # router for one example through the `with_router` helper); `lib/` never assigns it after
-    # `initialize`, so it is a test seam rather than runtime configuration.
+    # Points the stack at another router. A per-service stack is built with its own (see
+    # {MiddlewareStack.build}); the shared instance is pointed at a throwaway router by specs.
     attr_accessor :router
 
     def initialize

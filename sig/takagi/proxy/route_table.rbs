@@ -6,8 +6,9 @@ module Takagi
       attr_reader host: String
       attr_reader port: Integer
       attr_reader outbound: Symbol?
+      attr_reader strip_prefix: bool
 
-      def initialize: (prefix: String, host: String, port: Integer, ?outbound: Symbol?) -> void
+      def initialize: (prefix: String, host: String, port: Integer, ?outbound: Symbol?, ?strip_prefix: bool) -> void
 
       # The number of path segments in the prefix; the longest match wins.
       def depth: () -> Integer
@@ -15,8 +16,12 @@ module Takagi
       # True when the prefix claims `path` (segment-aware, so `/sensor` does not capture `/sensors`).
       def matches?: (String path) -> bool
 
-      # The path the backend sees: `path` with the prefix removed, always absolute.
+      # The path the backend sees: the full path for a transparent route, otherwise `path` with
+      # the prefix removed, always absolute.
       def relative_path: (String path) -> String
+
+      # Whether this route consumes its prefix.
+      def strip_prefix?: () -> bool
 
       def authority: () -> String
       def to_s: () -> String
