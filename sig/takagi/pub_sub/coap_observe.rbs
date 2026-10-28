@@ -1,0 +1,14 @@
+module Takagi
+  module PubSub
+    class CoapObserve
+      MAX_NOTIFICATION_SIZE: Hash[Symbol, Integer]
+
+      def self.for: (Symbol transport) -> CoapObserve
+      def initialize: (?transport: Symbol) -> void
+      def name: () -> Symbol
+      def capabilities: () -> Hash[Symbol, untyped]
+      def for_transport: (Symbol transport) -> CoapObserve
+      def notification_type: (?liveness_check: bool) -> (Integer | nil)
+    end
+  end
+end

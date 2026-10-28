@@ -35,11 +35,10 @@ module Takagi
     # @return [Router] Singleton router instance
     def self.router: () -> untyped
 
-    # Registers an OBSERVE route in the global router (server-side)
-    # Use this to make a resource observable by clients
+    # Registers a state-carrying topic resource in the global router (server-side)
     # @param path [String] The URL path
-    # @param block [Proc] The handler function
-    def self.observable: (untyped path, ?metadata: ::Hash[untyped, untyped]) { (?) -> untyped } -> untyped
+    # @param block [Proc] The producer
+    def self.topic: (untyped path, ?metadata: ::Hash[untyped, untyped]) { (?) -> untyped } -> Topic
 
     # Configures CoRE Link Format metadata for an existing route. Handy when
     # you want to declare handlers and metadata separately (e.g., during boot).

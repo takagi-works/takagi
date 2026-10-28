@@ -25,10 +25,11 @@ RSpec.describe 'Takagi::Proxy block-wise and Observe policy (plan row 7)' do
     # The backend SUPPORTS Observe (RFC 7641): this is the route an Observe request would match if
     # one ever reached this hop, and both handlers report back what they actually received - the
     # way the upload route reports the options it saw.
-    @router.get('/obs') { |req, _params| { message: 'one shot', observing: req.options.key?(6) } }
-    @router.observable('/obs') do |req, _params|
-      { message: 'observable', observing: req.options.key?(6) }
-    end
+    # The backend SUPPORTS Observe (RFC 7641): the topic is the resource an Observe request
+    # would register on if one ever reached this hop. A topic serves its current representation
+    # (design D1); registering would be visible on the wire as an Observe option in the response,
+    # which the request below proves never happened.
+    @router.topic('/obs') { { message: 'observable', observing: false } }
     with_router(@router) { example.run }
   end
 
@@ -161,8 +162,9 @@ RSpec.describe 'Takagi::Proxy block-wise and Observe policy (plan row 7)' do
 
         # What the BACKEND saw, as reported by the backend itself: the forwarded request carried no
         # Observe option, so no observation was opened on the next hop. A proxy that relays the
-        # subscription matches the OBSERVE route instead and answers from it ("observable").
-        expect(JSON.parse(response.payload)).to eq('message' => 'one shot', 'observing' => false)
+        # subscription would tell the topic to register the proxy, and the topic would answer with
+        # an Observe option - which the response above proves it did not.
+        expect(JSON.parse(response.payload)).to eq('message' => 'observable', 'observing' => false)
 
         # The backend now changes the resource and notifies its observers (RFC 7641 4.2). A control
         # socket subscribed DIRECTLY to the backend receives that notification, which is what makes

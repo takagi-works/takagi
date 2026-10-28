@@ -146,12 +146,14 @@ module Takagi
         end
       end
 
-      # Registers an observable route directly on the application.
+      # Registers a state-carrying topic resource directly on the application. The block
+      # runs once, producing the initial representation; see {Router#topic}.
       #
       # @param path [String] Resource path
       # @param metadata [Hash] Additional CoRE metadata
-      def observable(path, metadata: {}, &block)
-        root_controller.observable(path, metadata: metadata, &block)
+      # @return [Takagi::Topic]
+      def topic(path, metadata: {}, &block)
+        root_controller.topic(path, metadata: metadata, &block)
       end
 
       # Configure the application

@@ -13,6 +13,11 @@ module Takagi
       # needs no router of its own and cannot go stale against the router actually in use.
       attr_accessor :route_entry
 
+      # The client endpoint that sent this request, set by the serving transport: a
+      # `[host, port]` pair. Observe registration keys the observer list by it (RFC 7641
+      # §4.1), and a Reset or a deregistration identifies the entry it removes.
+      attr_accessor :source_endpoint
+
       def initialize(data, transport: :udp)
         super(data, transport: transport)
         @method = coap_code_to_method(@code)
@@ -142,10 +147,10 @@ module Takagi
         method == 'DELETE'
       end
 
-      # Check if request is an OBSERVE
+      # Check if request carries the Observe option (RFC 7641 §2)
       # @return [Boolean]
       def observe?
-        method == 'OBSERVE'
+        option?(CoAP::Registries::Option::OBSERVE)
       end
 
       private

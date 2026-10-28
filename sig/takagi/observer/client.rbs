@@ -18,9 +18,17 @@ module Takagi
 
       def on_notify: () { (?) -> untyped } -> untyped
 
-      def subscribe: () -> untyped
+      def on_subscription_failed: () { (?) -> untyped } -> untyped
+
+      def subscribe: () -> (:subscribed | :failed)
+
+      def cancel: () -> void
 
       def stop: () -> untyped
+
+      def token: () -> untyped
+
+      def last_seq: () -> (Integer | nil)
 
       alias close stop
 

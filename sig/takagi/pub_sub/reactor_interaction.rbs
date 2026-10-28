@@ -1,0 +1,17 @@
+module Takagi
+  module PubSub
+    class ReactorInteraction
+      VERBS: Array[Symbol]
+      ALIASES: Hash[Symbol, Array[Symbol]]
+      SPELLINGS: Hash[Symbol, Symbol]
+
+      class UnknownNameError < StandardError
+      end
+
+      def self.resolve: (Symbol | String name) -> Symbol
+      def self.verb?: (Symbol | String name) -> bool
+      def self.spellings_for: (Symbol verb) -> Array[Symbol]
+      def self.spellings: () -> Hash[Symbol, Symbol]
+    end
+  end
+end

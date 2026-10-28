@@ -1,15 +1,13 @@
 module Takagi
-  # Coordinates local observables and remote observe subscriptions.
+  # Coordinates local topics and remote observe subscriptions.
   class Reactor
-    @observables: untyped
+    @topics: untyped
 
-    @observes: untyped
-
-    @watcher: untyped
+    @observers: untyped
 
     def initialize: () -> void
 
-    def observable: (untyped path) { (?) -> untyped } -> untyped
+    def topic: (untyped path) { (?) -> untyped } -> Topic
 
     def observe: (untyped uri) { (?) -> untyped } -> untyped
 

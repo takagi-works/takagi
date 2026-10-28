@@ -427,6 +427,8 @@ module Takagi
           inbound_request = read_request(sock)
           break unless inbound_request
 
+          peer = sock.peeraddr
+          inbound_request.source_endpoint = [peer[3], peer[1]] if peer
           @logger.debug "Received request from client: #{inbound_request.inspect}"
 
           case signaling_action(sock, inbound_request)

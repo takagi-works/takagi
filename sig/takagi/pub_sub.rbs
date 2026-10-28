@@ -1,0 +1,6 @@
+module Takagi
+  module PubSub
+    def self.dispatch: (Symbol | String transport_name, Symbol | String verb, ?options: Hash[untyped, untyped]) -> untyped
+    def self.validate_request!: (Symbol | String transport_name, untyped transport, Symbol verb, ?options: Hash[untyped, untyped]) -> void
+  end
+end

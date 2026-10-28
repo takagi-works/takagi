@@ -26,15 +26,11 @@ module Takagi
 
       # Convert CoAP code number to method name using registry
       # @param code [Integer] CoAP code number
-      # @return [String] Method name (e.g., 'GET', 'OBSERVE')
+      # @return [String] Method name (e.g., 'GET')
       def coap_code_to_method(code)
-        # Check if it's an OBSERVE request (GET with Observe option)
-        if code == CoAP::Registries::Method::GET && @options && @options[CoAP::Registries::Option::OBSERVE]
-          'OBSERVE'
-        else
-          # Use CoAP registry to convert code to string
-          CoAP::CodeHelpers.to_string(code)
-        end
+        # Observe is an OPTION on the underlying method (RFC 7641 §2), not a method of its
+        # own: a GET carrying the Observe option routes as the GET it is.
+        CoAP::CodeHelpers.to_string(code)
       end
 
       # Convert method name to CoAP code number using registry

@@ -109,6 +109,18 @@ module Takagi
       mounted.router.find_entry(method, mounted.relative_path(path))
     end
 
+    # The topic behind a request path, resolved through the same longest-prefix match as
+    # {#find_route}, so the two lookups always agree on which resource a request serves.
+    #
+    # @param path [String] full request path
+    # @return [Takagi::Topic, nil]
+    def topic_for(path)
+      mounted = find_mounted_controller(path)
+      return nil unless mounted
+
+      mounted.router.topic_for(mounted.relative_path(path))
+    end
+
     # Get all routes from all mounted controllers
     #
     # @return [Array<String>] List of all routes

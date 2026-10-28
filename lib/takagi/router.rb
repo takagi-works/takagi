@@ -6,6 +6,7 @@ require_relative 'helpers'
 require_relative 'router/route_matcher'
 require_relative 'router/metadata_extractor'
 require_relative 'hooks'
+require_relative 'topic'
 
 module Takagi
   class Router
@@ -149,6 +150,7 @@ module Takagi
 
     def initialize
       @routes = {}
+      @topics = {}
       @routes_mutex = Mutex.new # Protects route modifications in multithreaded environments
       @logger = Takagi.logger
       @route_matcher = RouteMatcher.new(@logger)
@@ -188,20 +190,59 @@ module Takagi
       end
     end
 
-    # Registers a OBSERVE route
+    # Registers a state-carrying topic resource (design D1).
+    #
+    # The declaration block runs ONCE, producing the initial representation; serving a
+    # request never re-runs it. A plain GET reads the current representation, a GET with
+    # Observe: 0 registers the client (see {Takagi::Topic#handle_request}). Declaring the
+    # same path twice is refused.
+    #
     # @param path [String] The URL path
-    # @param block [Proc] The handler function
-    def observable(path, metadata: {}, &block)
-      observable_metadata = { obs: true, rt: 'core#observable', if: 'takagi.observe' }
-      add_route('OBSERVE', path, metadata: observable_metadata.merge(metadata), &block)
+    # @param metadata [Hash] CoRE Link Format metadata
+    # @yield [emitter] Produces the initial representation
+    # @return [Takagi::Topic] the declared topic
+    # @raise [Takagi::Topic::DuplicateTopicError] when the path is already declared
+    def topic(path, metadata: {}, &block)
+      topic_resource = @routes_mutex.synchronize do
+        raise Topic::DuplicateTopicError, "topic path already declared: #{path}" if @topics.key?(path)
+
+        resource = Topic.new(path, &block)
+        @topics[path] = resource
+        resource
+      end
+
+      topic_metadata = { obs: true, rt: 'core#observable', if: 'takagi.observe' }
+      add_route('GET', path, metadata: topic_metadata.merge(metadata)) do |request|
+        topic_resource.handle_request(request)
+      end
+      topic_resource
+    end
+
+    # @return [Hash{String => Takagi::Topic}] declared topics by path
+    def topics
+      @routes_mutex.synchronize { @topics.dup }
+    end
+
+    # @param path [String]
+    # @return [Takagi::Topic, nil]
+    def topic_for(path)
+      @routes_mutex.synchronize { @topics[path] }
+    end
+
+    # Ends a topic's observation and removes it, so later reads are answered 4.04.
+    #
+    # @param path [String]
+    # @return [void]
+    def delete_topic(path)
+      topic_resource = @routes_mutex.synchronize { @topics.delete(path) }
+      return unless topic_resource
+
+      topic_resource.delete
+      @routes_mutex.synchronize { @routes.delete("GET #{path}") }
     end
 
     def all_routes
       @routes.values.map { |entry| "#{entry.method} #{entry.path}" }
-    end
-
-    def find_observable(path)
-      @routes.values.find { |entry| entry.method == 'OBSERVE' && entry.path == path }
     end
 
     # Finds a registered route for a given method and path

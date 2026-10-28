@@ -2,7 +2,9 @@
 
 module Takagi
   module Observer
-    # Periodically notifies observers by re-running registered handlers.
+    # Boot surface servers start. Notification is driven by state change ({Takagi::Topic
+    # #publish}), never by an interval (design D9), so this thread notifies nothing: the
+    # old per-path re-run of observable blocks was removed from the notification path.
     class Watcher
       def initialize(interval: 1)
         @interval = interval
@@ -15,22 +17,11 @@ module Takagi
 
         @running = true
         @thread = Thread.new do
-          while @running
-            Takagi::ObserveRegistry.subscription_paths.each do |path|
-              observable_route = Takagi::Base.router.find_observable(path)
-              next unless observable_route
-
-              handler = observable_route.block
-              current_value = handler.call(nil)
-
-              Takagi::ObserveRegistry.notify(path, current_value)
-            end
-            sleep @interval
-          end
-          @thread
+          sleep @interval while @running
         rescue StandardError => e
           Takagi.logger.error "Observer Watcher Error: #{e.message}"
         end
+        @thread
       end
 
       def stop

@@ -5,324 +5,295 @@ require 'socket'
 require 'timeout'
 require 'uri'
 
-RSpec.describe Takagi::Observer::Client do
-  # `port: 0` on the socket itself: the port is earned by the bind that will hold it, so there is
-  # no window between a probe and the bind for anything else to take it (row 25 of
-  # .omo/plans/tcp-multi-worker.md).
-  let(:server_socket) { UDPSocket.new.tap { |socket| socket.bind('0.0.0.0', 0) } }
-  let(:server_port) { server_socket.addr[1] }
-  let(:notify_payload) { '{"temp":22.5}' }
-  let(:uri) { "coap://localhost:#{server_port}/sensors/temp" }
-
-  after do
-    server_socket.close
-  end
-
-  it 'sends observe request and receives notification' do
-    queue = Queue.new
-    subscribed = Queue.new
-
-    server_thread = Thread.new do
-      data, addr = server_socket.recvfrom(1024)
-      request = Takagi::Message::Inbound.new(data)
-
-      # A GET carrying the Observe option is an Observe request; the registration value 0
-      # is the zero-length integer encoding of 0 (RFC 7641 §3.1, RFC 7252 §3.2).
-      expect(request.observe?).to be(true)
-      expect(request.options).to have_key(6)
-
-      response = Takagi::Message::Outbound.new(
-        code: 69,
-        payload: notify_payload,
-        token: request.token,
-        type: 2
-      )
-      Timeout.timeout(5) { subscribed.pop }
-      server_socket.send(response.to_bytes, 0, addr[3], addr[1])
+RSpec.describe 'RFC 7641 observe on the wire' do
+  # The observed application: state-carrying topics served by a real server, observed by a
+  # plain raw-socket peer that decodes what actually goes on the wire (design D10). The
+  # in-house Observer::Client cannot be the oracle: it accepts any datagram whose token
+  # matches, so the response to the registering GET is indistinguishable from a notification.
+  # The topics live on a DEDICATED router so this spec never touches the process-global one
+  # other specs depend on for discovery and routing.
+  def conformance_router
+    @conformance_router ||= Takagi::Router.new.tap do |router|
+      router.get('/ping') { { message: 'Pong' } }
+      router.topic('/sensors/temp') { { temp: 20.0, unit: 'celsius' } }
+      router.topic('/observe/block-wise/big') { 'x' * 3072 }
+      router.topic('/observe/block-wise/small') { 'small' }
     end
-
-    client = Takagi::Observer::Client.new(uri)
-    client.on_notify do |payload, _|
-      queue.push(payload)
-    end
-
-    client.subscribe
-    subscribed.push(:ready)
-
-    result = nil
-    Timeout.timeout(2) { result = queue.pop }
-
-    expect(result).to eq(notify_payload)
-
-    server_thread.kill
-  end
-end
-
-RSpec.describe Takagi::Reactor do
-  let(:reactor) { Takagi::Reactor.new }
-
-  it 'registers remote observe' do
-    uri = "coap://localhost:5683/sensors/temp"
-    handler = proc { |_payload, _inbound| }
-
-    # Allow initialization logs, then expect the observe log
-    allow(Takagi.logger).to receive(:info)
-    expect(Takagi.logger).to receive(:info).with("Observing remote resource: #{uri}")
-    reactor.observe(uri, &handler)
-
-    # New reactor uses @observers hash instead of @observes array
-    expect(reactor.observers.size).to eq(1)
-    expect(reactor.observers[uri][:uri]).to eq(uri)
   end
 
-  it 'notifies observer handlers when triggered' do
-    uri = "coap://localhost:5683/sensors/temp"
-    queue = Queue.new
-
-    reactor.observe(uri) do |payload, _|
-      queue.push(payload)
-    end
-
-    reactor.trigger_observe(uri, '{"temp":30.0}')
-
-    result = nil
-    Timeout.timeout(2) { result = queue.pop }
-
-    expect(result).to eq('{"temp":30.0}')
-  end
-end
-
-RSpec.describe 'Takagi Observe End-to-End' do
-  let(:queue) { Queue.new }
-  # The forked child EARNS its port (`port: 0`) and hands the real number to the parent over a
-  # pipe, so the parent never has to guess a "free" port another process could take between the
-  # probe and the child's bind (row 25 of .omo/plans/tcp-multi-worker.md). `PORT` still overrides
-  # it for a manual run.
-  port = nil
-
-  def wait_until_serving(server_port, deadline_seconds: 10)
-    probe = UDPSocket.new
-    request = Takagi::Message::Request.new(
-      method: :get,
-      uri: URI("coap://127.0.0.1:#{server_port}/ping"),
-      token: 'rdy'
-    )
-    bytes = request.to_bytes
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + deadline_seconds
-    loop do
-      probe.send(bytes, 0, '127.0.0.1', server_port)
-      return if probe.wait_readable(0.25)
-
-      remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      raise "server on port #{server_port} never became ready" if remaining.negative?
-    end
-  ensure
-    probe&.close
-  end
-
-  def stop_forked_server(pid)
-    Process.kill('INT', pid)
-    Timeout.timeout(5) { Process.wait(pid) }
-  rescue Errno::ESRCH, Errno::ECHILD
-    nil
-  rescue Timeout::Error
-    Process.kill('KILL', pid)
-    Process.wait(pid)
-  end
-
-  before(:all) do
-    reader, writer = IO.pipe
-    @server_pid = fork do
-        reader.close
-        class TestApp < Takagi::Base
-          reactor do
-            observable "/sensors/temp" do
-              { temp: 42.0 }
-            end
-          end
-        end
-
-        # `boot!` plus `build_servers` plus `run!` is exactly what `Base.run!` does for one
-        # protocol; the only parts left out are the startup banner and plugin enabling, neither
-        # of which this example observes. Binding port 0 here is what makes the reported port a
-        # fact instead of a guess.
-        TestApp.boot!
-        server = TestApp.send(:build_servers, [:udp], ENV['PORT'] ? ENV['PORT'].to_i : 0).first
-        writer.puts(server.instance_variable_get(:@socket).addr[1])
-        writer.close
-        server.run!
-      end
-      writer.close
-      port = reader.gets.to_i
-      reader.close
-      wait_until_serving(port)
-  end
-
-  after(:all) do
-    stop_forked_server(@server_pid)
-  end
-
-  it 'observes server observable' do
-    client = Takagi::Observer::Client.new("coap://localhost:#{port}/sensors/temp")
-    client.on_notify do |payload, _|
-      queue.push(payload)
-    end
-
-    client.subscribe
-
-    result = nil
-    Timeout.timeout(5) { result = queue.pop }
-
-    expect(result).to include("temp")
-  end
-end
-
-# Observable resources for the block-wise observe examples. The handlers return plain
-# Strings, so a notification value and the representation a GET serves are the same
-# bytes; `discovery: true` keeps the spec-only routes out of /.well-known/core.
-class ObserveBlockWiseSpecApp < Takagi::Base
-  BIG = 'x' * 3072
-  SMALL = 'small'
-  BIG_PATH = '/observe/block-wise/big'
-  SMALL_PATH = '/observe/block-wise/small'
-
-  observable BIG_PATH, metadata: { discovery: true } do
-    BIG
-  end
-
-  observable SMALL_PATH, metadata: { discovery: true } do
-    SMALL
-  end
-end
-
-RSpec.describe 'Takagi Observe + Block2' do
-  let(:option_value) { Takagi::CoAP::BlockWise::OptionValue }
   let(:observe) { Takagi::CoAP::Registries::Option::OBSERVE }
+  let(:content_format) { Takagi::CoAP::Registries::Option::CONTENT_FORMAT }
   let(:block2) { Takagi::CoAP::Registries::Option::BLOCK2 }
   let(:size2) { Takagi::CoAP::Registries::Option::SIZE2 }
-  let(:etag) { Takagi::CoAP::Registries::Option::ETAG }
+  let(:codes) { Takagi::CoAP::Registries::Response }
+  let(:option_value) { Takagi::CoAP::BlockWise::OptionValue }
 
   before do
-    @previous_stack = Takagi.config.middleware.stack
-    Takagi.config.middleware.stack = [{ name: 'BlockWise', options: {} }]
-    Takagi::MiddlewareStack.instance.reset!
-
     @server = Takagi::Server::Udp.new(port: 0, worker_processes: 1, worker_threads: 1,
-                                      watcher: Takagi::Observer::Watcher.new(interval: 60))
-    @port = bound_port_of(@server)
+                                      router: conformance_router,
+                                      middleware_stack: Takagi::MiddlewareStack.build(router: conformance_router))
     @server_thread = Thread.new { @server.run! }
-    @subscriber = UDPSocket.new
-    @subscriber.bind('127.0.0.1', 0)
+    @port = bound_port_of(@server)
+    @sockets = []
   end
 
   after do
-    [ObserveBlockWiseSpecApp::BIG_PATH, ObserveBlockWiseSpecApp::SMALL_PATH].each do |path|
-      Takagi::ObserveRegistry.unsubscribe(path, 'obs-blk')
-      Takagi::ObserveRegistry.unsubscribe(path, 'obs-small')
-    end
-    @subscriber&.close
+    @sockets&.each(&:close)
     @server&.shutdown!
     @server_thread&.join(5)
-    Takagi.config.middleware.stack = @previous_stack
-    Takagi::MiddlewareStack.instance.reset!
+    Takagi::ObserveRegistry.entries.clear
+    reset_topic_state
   end
 
-  # The real client observes the resource: a GET with the Observe option, which is how
-  # RFC 7641 delivers the current state of an observable.
-  def observe_with_client(path)
-    client = Takagi::Client.new("coap://127.0.0.1:#{@port}", timeout: 5)
-    client.get(path, options: { observe => 0 })
-  ensure
-    client&.close
+  # Topics hold their representation across examples; publishing an equal value is a silent
+  # no-op, so each example starts from the known initial representation.
+  def reset_topic_state
+    conformance_router.topic_for('/sensors/temp')&.publish({ temp: 20.0, unit: 'celsius' })
+    conformance_router.topic_for('/observe/block-wise/big')&.publish('x' * 3072)
+    conformance_router.topic_for('/observe/block-wise/small')&.publish('small')
   end
 
-  # A raw subscriber exchange, used to fetch the blocks a notification announced the
-  # way an observing client would.
-  def raw_get(path, options: {}, token: 'cont-blk')
-    uri = URI("coap://127.0.0.1:#{@port}#{path}")
-    request = Takagi::Message::Request.new(method: :get, uri: uri, token: token, options: options)
-    @subscriber.send(request.to_bytes, 0, '127.0.0.1', @port)
-    raise 'no CoAP response within 5s' unless @subscriber.wait_readable(5)
+  # Await an observable state: returns when the entry is gone inside the deadline.
+  def wait_until_entry_gone(path, token:)
+    endpoint = nil
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    loop do
+      list = Takagi::ObserveRegistry.entries[path]
+      gone = list.nil? || list.keys.none? { |(ep, tok)| tok == token }
+      return true if gone
 
-    Takagi::Message::Inbound.new(@subscriber.recvfrom(65_535).first)
+      remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      raise "entry #{token} on #{path} was never removed" if remaining.negative?
+
+      sleep 0.01
+    end
   end
 
-  def option(message, number)
-    Array(message.respond_to?(:option) ? message.option(number) : message.options[number]).first
+  def new_socket
+    socket = UDPSocket.new
+    socket.bind('127.0.0.1', 0)
+    @sockets << socket
+    socket
+  end
+
+  def send_raw(socket, path, token:, options: {})
+    request = Takagi::Message::Request.new(
+      method: :get, uri: URI("coap://127.0.0.1:#{@port}#{path}"), token: token, options: options
+    )
+    socket.send(request.to_bytes, 0, '127.0.0.1', @port)
+  end
+
+  def read_response(socket, timeout: 5)
+    raise "no datagram within #{timeout}s" unless socket.wait_readable(timeout)
+
+    Takagi::Message::Inbound.new(socket.recvfrom(65_535).first)
+  end
+
+  def assert_no_datagram(socket, window: 0.4)
+    expect { Timeout.timeout(window) { socket.recvfrom(4096) } }.to raise_error(Timeout::Error)
+  end
+
+  def register(path, token:, socket: new_socket)
+    send_raw(socket, path, token: token, options: { observe => 0 })
+    response = read_response(socket)
+    expect(response.code).to eq(codes::CONTENT)
+    expect(response.options).to have_key(observe)
+    response
+  end
+
+  def publish(path, value)
+    topic = conformance_router.topic_for(path)
+    raise "no topic #{path}" unless topic
+
+    expect(topic.publish(value)).to be(true)
   end
 
   def uint_value(bytes)
     bytes.to_s.b.bytes.reduce(0) { |acc, byte| (acc << 8) | byte }
   end
 
-  it 'serves a 3 KiB observable to the real client as blocks it reassembles byte-for-byte' do
-    response = observe_with_client(ObserveBlockWiseSpecApp::BIG_PATH)
-
-    expect(response.success?).to be(true)
-    expect(response.payload).to eq(ObserveBlockWiseSpecApp::BIG)
-    expect(response.options).not_to have_key(block2)
+  # Inbound stores a single option occurrence as the raw value, not an array.
+  def option_value_of(message, number)
+    Array(message.options[number]).first
   end
 
-  it 'reassembles a 3 KiB observable through the public #observe entry point' do
-    client = Takagi::Client.new("coap://127.0.0.1:#{@port}", timeout: 5)
+  it 'confirms a registration with an Observe option and the current representation (3.2)' do
+    socket = new_socket
+    response = register('/sensors/temp', token: 'tok1', socket: socket)
 
-    response = client.observe(ObserveBlockWiseSpecApp::BIG_PATH)
+    expect(response.payload).to eq('{"temp":20.0,"unit":"celsius"}')
+    expect(response.options).to have_key(content_format)
 
-    expect(response.success?).to be(true)
-    expect(response.payload).to eq(ObserveBlockWiseSpecApp::BIG)
-    expect(response.options).not_to have_key(block2)
+    endpoint = "127.0.0.1:#{socket.addr[1]}"
+    expect(Takagi::ObserveRegistry.entries['/sensors/temp']).to have_key([endpoint, 'tok1'])
+  end
+
+  it 'refused registration is visible to the client: no Observe option on a plain route (3.2)' do
+    socket = new_socket
+    send_raw(socket, '/ping', token: 'tokr', options: { observe => 0 })
+    response = read_response(socket)
+
+    expect(response.code).to eq(codes::CONTENT)
+    expect(response.options).not_to have_key(observe)
+    expect(Takagi::ObserveRegistry.entries['/ping']).to be_nil
+  end
+
+  it 'does not duplicate a repeated registration of one endpoint and token (3.1)' do
+    socket = new_socket
+    register('/sensors/temp', token: 'tokr', socket: socket)
+    register('/sensors/temp', token: 'tokr', socket: socket)
+
+    expect(Takagi::ObserveRegistry.entries['/sensors/temp'].size).to eq(1)
+
+    publish('/sensors/temp', { temp: 21.0, unit: 'celsius' })
+
+    notification = read_response(socket)
+    expect(notification.options).to have_key(observe)
+    assert_no_datagram(socket)
+  end
+
+  it 'notifies with a strictly increasing Observe value on each change (4.1)' do
+    socket = new_socket
+    register('/sensors/temp', token: 'seq', socket: socket)
+
+    publish('/sensors/temp', { temp: 21.0, unit: 'celsius' })
+    first = read_response(socket)
+    expect(first.options).to have_key(observe)
+
+    publish('/sensors/temp', { temp: 22.0, unit: 'celsius' })
+    second = read_response(socket)
+
+    expect(second.options).to have_key(observe)
+    expect(uint_value(option_value_of(second, observe))).to be > uint_value(option_value_of(first, observe))
+  end
+
+  it 'echoes the registering token to each observer (4.2)' do
+    socket_a = new_socket
+    socket_b = new_socket
+    register('/sensors/temp', token: 'tokA', socket: socket_a)
+    register('/sensors/temp', token: 'tokB', socket: socket_b)
+
+    publish('/sensors/temp', { temp: 21.0, unit: 'celsius' })
+
+    notification_a = read_response(socket_a)
+    notification_b = read_response(socket_b)
+    expect(notification_a.token).to eq('tokA')
+    expect(notification_b.token).to eq('tokB')
+    expect(notification_a.options).to have_key(content_format)
+  end
+
+  it 'ends the observation when the topic is deleted: one 4.04, then silence, 4.04 reads (3.3)' do
+    socket = new_socket
+    register('/sensors/temp', token: 'end', socket: socket)
+
+    conformance_router.delete_topic('/sensors/temp')
+
+    notification = read_response(socket)
+    expect(notification.code).to eq(codes::NOT_FOUND)
+    expect(notification.options).not_to have_key(observe)
+    assert_no_datagram(socket)
+
+    send_raw(socket, '/sensors/temp', token: 'end')
+    expect(read_response(socket).code).to eq(codes::NOT_FOUND)
   ensure
-    client&.close
+    # The delete example removes the shared topic; restore it so every other example,
+    # in any order, finds the declaration it registers on.
+    conformance_router.topic('/sensors/temp') { { temp: 20.0, unit: 'celsius' } }
+    Takagi::ObserveRegistry.entries.delete('/sensors/temp')
   end
 
-  it 'delivers a notification that exceeds one datagram as the first block of that sequence' do
-    path = ObserveBlockWiseSpecApp::BIG_PATH
-    Takagi::ObserveRegistry.subscribe(path, address: '127.0.0.1', port: @subscriber.addr[1], token: 'obs-blk')
+  it 'removes an entry on a Reset in reply to a notification (5.1)' do
+    socket = new_socket
+    register('/sensors/temp', token: 'rst', socket: socket)
 
-    Takagi::ObserveRegistry.notify(path, ObserveBlockWiseSpecApp::BIG)
+    publish('/sensors/temp', { temp: 21.0, unit: 'celsius' })
+    notification = read_response(socket)
 
-    expect(@subscriber.wait_readable(5)).to be_truthy
-    data, = @subscriber.recvfrom(65_535)
-    notification = Takagi::Message::Inbound.new(data)
-    block = option_value.decode(option(notification, block2))
+    reset = Takagi::Message::Outbound.new(
+      code: '0.00', payload: '', token: '',
+      message_id: notification.message_id,
+      type: Takagi::CoAP::Registries::MessageType::RST
+    )
+    socket.send(reset.to_bytes, 0, '127.0.0.1', @port)
 
-    expect(notification.token).to eq('obs-blk')
+    wait_until_entry_gone('/sensors/temp', token: 'rst')
+    publish('/sensors/temp', { temp: 22.0, unit: 'celsius' })
+    assert_no_datagram(socket)
+  end
+
+  it 'deregisters explicitly with Observe: 1, without touching another endpoint (5.2)' do
+    socket_a = new_socket
+    socket_b = new_socket
+    register('/sensors/temp', token: 'dA', socket: socket_a)
+    register('/sensors/temp', token: 'dB', socket: socket_b)
+
+    send_raw(socket_a, '/sensors/temp', token: 'dA', options: { observe => 1 })
+    deregistration = read_response(socket_a)
+    expect(deregistration.options).not_to have_key(observe)
+
+    publish('/sensors/temp', { temp: 21.0, unit: 'celsius' })
+
+    expect(read_response(socket_b).token).to eq('dB')
+    assert_no_datagram(socket_a)
+  end
+
+  it 'a plain GET reads the current representation without registering (topics)' do
+    socket = new_socket
+    send_raw(socket, '/sensors/temp', token: 'plain')
+    response = read_response(socket)
+
+    expect(response.code).to eq(codes::CONTENT)
+    expect(response.options).not_to have_key(observe)
+    expect(Takagi::ObserveRegistry.entries['/sensors/temp']).to be_nil
+  end
+
+  it 'delivers a large notification as the first block of a block-wise sequence (4.3)' do
+    socket = new_socket
+    register('/observe/block-wise/big', token: 'blk', socket: socket)
+
+    publish('/observe/block-wise/big', 'y' * 3072)
+
+    notification = read_response(socket)
+    block = option_value.decode(option_value_of(notification, block2))
+
+    expect(notification.token).to eq('blk')
     expect(block.num).to eq(0)
     expect(block.more?).to be(true)
     expect(block.szx).to eq(6)
-    expect(data.bytesize).to be < 1200
-    expect(notification.payload).to eq(ObserveBlockWiseSpecApp::BIG.byteslice(0, 1024))
-    expect(uint_value(option(notification, size2))).to eq(ObserveBlockWiseSpecApp::BIG.bytesize)
-    expect(option(notification, etag).bytesize).to eq(8)
-
-    # The announced representation is retrievable: the notification's first block and
-    # the blocks a GET serves belong to one sequence, with the same ETag and byte-exact
-    # payloads, and the real client reassembles the whole representation.
-    continuation = raw_get(path, options: { observe => 0, block2 => option_value.encode(num: 1, more: false, szx: 6) })
-    expect(option(continuation, etag)).to eq(option(notification, etag))
-    expect(continuation.payload).to eq(ObserveBlockWiseSpecApp::BIG.byteslice(1024, 1024))
-
-    response = observe_with_client(path)
-    expect(response.payload).to eq(ObserveBlockWiseSpecApp::BIG)
-    expect(Array(response.options[etag]).first).to eq(option(notification, etag))
-    expect(response.payload.byteslice(0, 1024)).to eq(notification.payload)
+    expect(notification.payload.bytesize).to eq(1024)
+    expect(uint_value(option_value_of(notification, size2))).to eq(3072)
   end
 
-  it 'leaves a small observable and its notification unchanged' do
-    path = ObserveBlockWiseSpecApp::SMALL_PATH
+  it 'the documented client call sequence - subscribe, notified, cancel - runs against a real server (6.4)' do
+    observer = Takagi::Observer::Client.new("coap://127.0.0.1:#{@port}/sensors/temp")
+    notifications = Queue.new
+    observer.on_notify { |payload, _| notifications << payload }
 
-    response = observe_with_client(path)
-    expect(response.payload).to eq(ObserveBlockWiseSpecApp::SMALL)
-    expect(response.options).not_to have_key(block2)
+    verdict = Timeout.timeout(5) { observer.subscribe }
+    expect(verdict).to eq(:subscribed)
+    # The confirmed registration response is the initial notification (current state).
+    expect(Timeout.timeout(5) { notifications.pop }).to include('20.0')
 
-    Takagi::ObserveRegistry.subscribe(path, address: '127.0.0.1', port: @subscriber.addr[1], token: 'obs-small')
-    Takagi::ObserveRegistry.notify(path, ObserveBlockWiseSpecApp::SMALL)
+    publish('/sensors/temp', { temp: 30.0, unit: 'celsius' })
+    expect(Timeout.timeout(5) { notifications.pop }).to include('30.0')
 
-    expect(@subscriber.wait_readable(5)).to be_truthy
-    notification = Takagi::Message::Inbound.new(@subscriber.recvfrom(65_535).first)
+    observer.cancel
+    wait_until_entry_gone('/sensors/temp', token: observer.token)
+    publish('/sensors/temp', { temp: 31.0, unit: 'celsius' })
+    expect { Timeout.timeout(0.5) { notifications.pop } }.to raise_error(Timeout::Error)
+  ensure
+    observer&.close
+  end
 
-    expect(notification.payload).to eq(ObserveBlockWiseSpecApp::SMALL)
-    expect(option(notification, block2)).to be_nil
-    expect(option(notification, size2)).to be_nil
+  it 'leaves a small topic and its notification unchanged (4.3)' do
+    socket = new_socket
+    register('/observe/block-wise/small', token: 'sm', socket: socket)
+
+    publish('/observe/block-wise/small', 'tiny')
+    notification = read_response(socket)
+
+    expect(notification.payload).to eq('tiny')
+    expect(notification.options).not_to have_key(block2)
+    expect(notification.options).not_to have_key(size2)
   end
 end

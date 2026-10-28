@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'securerandom'
+require_relative 'pub_sub/reactor_interaction'
 
 module Takagi
   # Instance-owned local event distribution.
@@ -328,16 +329,34 @@ module Takagi
     end
 
     # ============================================
-    # ALIASES: CoAP Observe + EventEmitter Style
+    # ALIASES: resolved through the vocabulary table
     # ============================================
 
-    alias observe consumer           # CoAP Observe style
-    alias on consumer                # EventEmitter style
-    alias notify publish             # CoAP Observe style
-    alias emit publish               # EventEmitter style
-    alias cancel unregister          # CoAP Observe style
+    # The bus operation each verb binds to. Resolving the alias spellings through
+    # {PubSub::ReactorInteraction} makes a spelling the same operation everywhere: observe/on
+    # are a subscription (consumer), notify/emit are publish, cancel/unsubscribe are
+    # unsubscribe (unregister).
+    VERB_BINDINGS = {
+      publish: :publish,
+      subscribe: :consumer,
+      unsubscribe: :unregister
+    }.freeze
+
+    # Every spelling the vocabulary declares, defined as a dispatch to that verb's bus
+    # operation - except the names that already ARE operations here (consumer/public/
+    # unregister) and `subscribe`, which keeps its documented remote meaning
+    # (subscribe_remote, the CoAP bridge entry point).
+    PubSub::ReactorInteraction.spellings.each do |spelling, verb|
+      next if spelling == :subscribe
+      next if method_defined?(spelling) || private_method_defined?(spelling)
+      next unless VERB_BINDINGS.key?(verb)
+
+      define_method(spelling) do |*args, **kwargs, &block|
+        public_send(VERB_BINDINGS.fetch(verb), *args, **kwargs, &block)
+      end
+    end
+
     alias subscribe subscribe_remote # CoAP Observe style
-    alias unsubscribe unregister     # CoAP Observe style
 
     # ============================================
     # UTILITY METHODS

@@ -310,7 +310,7 @@ end
 
 # Wraps the app to prefix routes registered by a plugin.
 class Takagi::Plugin::RoutePrefixProxy
-  ROUTE_METHODS = %i[get post put delete fetch observable observe].freeze
+  ROUTE_METHODS = %i[get post put delete fetch topic observe].freeze
 
   def initialize(app, prefix)
     @app = app

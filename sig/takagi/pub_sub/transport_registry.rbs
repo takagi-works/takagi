@@ -1,0 +1,26 @@
+module Takagi
+  module PubSub
+    class TransportRegistry
+      REQUIRED_CAPABILITIES: Array[Symbol]
+
+      class Error < StandardError
+      end
+
+      class DuplicateNameError < Error
+      end
+
+      class MissingCapabilitiesError < Error
+      end
+
+      class TransportNotFoundError < Error
+      end
+
+      def self.register: (Symbol | String name, untyped transport) -> untyped
+      def self.resolve: (Symbol | String name) -> untyped
+      def self.registered?: (Symbol | String name) -> bool
+      def self.names: () -> Array[Symbol]
+      def self.register_defaults: () -> untyped
+      def self.reset!: () -> void
+    end
+  end
+end

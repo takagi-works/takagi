@@ -112,14 +112,18 @@ module Takagi
     # @param block [Proc] The handler to be executed when the route is matched
     def add_route: (untyped method, untyped path, ?metadata: ::Hash[untyped, untyped]) { (?) -> untyped } -> untyped
 
-    # Registers a OBSERVE route
+    # Registers a state-carrying topic resource
     # @param path [String] The URL path
-    # @param block [Proc] The handler function
-    def observable: (untyped path, ?metadata: ::Hash[untyped, untyped]) { (?) -> untyped } -> untyped
+    # @param block [Proc] The producer
+    def topic: (untyped path, ?metadata: ::Hash[untyped, untyped]) { (?) -> untyped } -> Topic
+
+    def topics: () -> ::Hash[String, Topic]
+
+    def topic_for: (untyped path) -> (Topic | nil)
+
+    def delete_topic: (untyped path) -> void
 
     def all_routes: () -> untyped
-
-    def find_observable: (untyped path) -> untyped
 
     # Finds a registered route for a given method and path
     # @param method [String] HTTP method

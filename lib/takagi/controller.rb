@@ -92,14 +92,15 @@ module Takagi
         end
       end
 
-      # Register an observable route
+      # Register a state-carrying topic resource. The block runs once, producing the
+      # initial representation; see {Router#topic}.
       #
       # @param path [String] Route path
       # @param metadata [Hash] Additional metadata
-      # @yield Block to execute for this route
-      def observable(path, metadata: {}, &block)
-        observable_metadata = { obs: true, rt: 'core#observable', if: 'takagi.observe' }
-        add_route('OBSERVE', path, metadata: observable_metadata.merge(metadata), &block)
+      # @yield [emitter] Produces the initial representation
+      # @return [Takagi::Topic]
+      def topic(path, metadata: {}, &block)
+        router.topic(path, metadata: metadata, &block)
       end
 
       # Get the full mount path for this controller

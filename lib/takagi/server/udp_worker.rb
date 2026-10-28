@@ -154,11 +154,12 @@ module Takagi
       def handle_request(request, addr)
         inbound_request = Takagi::Message::Inbound.new(request)
         log_inbound_request(inbound_request)
+        endpoint = register_source!(inbound_request, addr)
+        return if reset_ends_observation?(inbound_request, endpoint)
 
         # RFC 7252 §4.5: Check for duplicate messages
-        source_endpoint = "#{addr[3]}:#{addr[1]}"
         if inbound_request.type.zero? # CON message
-          cached_response = @dedup_cache.check_duplicate(inbound_request.message_id, source_endpoint)
+          cached_response = @dedup_cache.check_duplicate(inbound_request.message_id, endpoint)
           if cached_response
             @logger.debug "Duplicate CON detected (MID: #{inbound_request.message_id}), resending cached response"
             return @sender.transmit(cached_response, addr[3], addr[1])
@@ -167,13 +168,13 @@ module Takagi
 
         immediate = immediate_response(inbound_request, request)
         if immediate
-          @dedup_cache.store_response(inbound_request.message_id, source_endpoint, immediate.to_bytes) if inbound_request.type.zero?
+          @dedup_cache.store_response(inbound_request.message_id, endpoint, immediate.to_bytes) if inbound_request.type.zero?
           return transmit(immediate, addr)
         end
 
         return unless routable_request?(inbound_request)
 
-        process_request(inbound_request, addr, source_endpoint)
+        process_request(inbound_request, addr, endpoint)
       rescue Takagi::Message::ParseError => e then @logger.debug "Ignoring malformed datagram from #{addr[3]}:#{addr[1]}: #{e.inspect}"
       rescue StandardError => e
         @logger.error "Handle_request failed: #{e.message}"
@@ -198,6 +199,25 @@ module Takagi
       def log_inbound_request(inbound_request)
         @logger.debug "Code: #{inbound_request.code}"
         @logger.debug "Method: #{inbound_request.method}"
+      end
+
+      # Tags the request with its client endpoint (RFC 7641 §4.1 keys the observer list by
+      # it) and returns the endpoint string.
+      def register_source!(inbound_request, addr)
+        inbound_request.source_endpoint = [addr[3], addr[1]]
+        "#{addr[3]}:#{addr[1]}"
+      end
+
+      # RFC 7641 §4.5: a Reset in reply to a notification removes that observation, on a
+      # transport that carries Reset (which UDP does, RFC 7252 §4.3). Returns true when the
+      # datagram was such a Reset and the observation is gone.
+      def reset_ends_observation?(inbound_request, endpoint)
+        return false unless inbound_request.type == CoAP::Registries::MessageType::RST
+        return false unless inbound_request.code.zero?
+
+        removed = Takagi::ObserveRegistry.remove_by_message_id(endpoint, inbound_request.message_id)
+        @logger.debug "Reset removed observation from #{endpoint}: #{removed}" if removed
+        removed
       end
 
       def immediate_response(inbound_request, datagram = nil)

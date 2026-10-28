@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe Takagi::Observer::Watcher do
-  let(:watcher) { described_class.new(interval: 0.1) }
+  let(:watcher) { described_class.new(interval: 0.05) }
 
   it "starts and stops the watcher" do
     thread = watcher.start
@@ -13,16 +13,13 @@ RSpec.describe Takagi::Observer::Watcher do
     expect(thread.alive?).to be_falsey
   end
 
-  it "calls notify during loop" do
-    allow(Takagi::ObserveRegistry).to receive(:subscription_paths).and_return([])
-    allow(Takagi::ObserveRegistry).to receive(:notify)
+  it "notifies nothing from an interval: time alone produces no notification" do
+    expect(Takagi::ObserveRegistry).not_to receive(:notify)
 
     thread = watcher.start
-    sleep 0.3
+    sleep 0.2
 
     watcher.stop
     thread.join
-
-    expect(Takagi::ObserveRegistry).to have_received(:subscription_paths).at_least(:once)
   end
 end

@@ -58,12 +58,13 @@ module Takagi
       end
     end
 
-    # Registers an OBSERVE route in the global router (server-side)
-    # Use this to make a resource observable by clients
+    # Registers a state-carrying topic resource in the global router (server-side). The
+    # block runs once, producing the initial representation; see {Router#topic}.
     # @param path [String] The URL path
-    # @param block [Proc] The handler function
-    def self.observable(path, metadata: {}, &block)
-      router.observable(path, metadata: metadata, &block)
+    # @param block [Proc] The producer
+    # @return [Takagi::Topic]
+    def self.topic(path, metadata: {}, &block)
+      router.topic(path, metadata: metadata, &block)
     end
 
     # Configures CoRE Link Format metadata for an existing route. Handy when

@@ -4,17 +4,16 @@ require_relative 'emitter'
 
 module Takagi
   module Observable
-    # Coordinator for observables (resources others watch) and observers (resources we watch)
+    # Coordinator for topics (state-carrying resources others watch) and observers
+    # (resources we watch remotely).
     #
-    # Supports both interval-based polling and event-driven push notifications.
-    # Uses thread pools for parallel execution and resource control.
-    #
-    # Similar to Controllers, provides a declarative configuration API for better DX.
+    # Uses thread pools for parallel execution and resource control. Similar to
+    # Controllers, provides a declarative configuration API for better DX.
     #
     # @example Inline in controller
     #   class SensorController < Takagi::Controller
     #     reactor do
-    #       observable '/temp' do |emitter|
+    #       topic '/temp' do |emitter|
     #         emitter.on_event('sensor.temp.changed')
     #       end
     #     end
@@ -25,10 +24,9 @@ module Takagi
     #     configure do
     #       threads 8
     #       name 'iot-reactor'
-    #       interval 0.5
     #     end
     #
-    #     observable '/sensors/temp' do |emitter|
+    #     topic '/sensors/temp' do |emitter|
     #       emitter.on_event('sensor.temp.changed')
     #     end
     #
@@ -41,7 +39,7 @@ module Takagi
     #     end
     #   end
     class Reactor
-      attr_reader :thread_pool, :config, :observables, :observers
+      attr_reader :thread_pool, :config, :topics, :observers
 
       class << self
         # Get or create the reactor's configuration
@@ -49,9 +47,8 @@ module Takagi
         # @return [Hash] The reactor's configuration hash
         def config
           @config ||= {
-            threads: nil,  # Defaults to 1
+            threads: nil, # Defaults to 1
             name: nil,
-            interval: 1.0,
             from_controller: nil
           }
         end
@@ -64,7 +61,6 @@ module Takagi
         #   configure do
         #     threads 8
         #     name 'iot-reactor'
-        #     interval 0.5
         #   end
         def configure(&block)
           ConfigContext.new(self).instance_eval(&block) if block
@@ -84,21 +80,13 @@ module Takagi
           config[:name] ||= "#{controller_class.name.split('::').last.downcase.gsub('controller', '')}-reactor"
         end
 
-        # Define an observable at class level
+        # Define a topic at class level. The block runs once, producing the initial
+        # representation (see {Takagi::Topic}).
         #
         # @param path [String] The resource path
-        # @yield Block for observable definition
-        def observable(path, &block)
-          observables[path] = { type: :event_driven, block: block }
-        end
-
-        # Define a polling observable at class level
-        #
-        # @param path [String] The resource path
-        # @param interval [Float] Polling interval
-        # @yield Block for observable definition
-        def observable_polling(path, interval: nil, &block)
-          observables[path] = { type: :polling, interval: interval, block: block }
+        # @yield [emitter] Produces the initial representation
+        def topic(path, &block)
+          topics[path] = block
         end
 
         # Define a remote observation at class level
@@ -109,9 +97,9 @@ module Takagi
           observers[uri] = block
         end
 
-        # Get class-level observables
-        def observables
-          @observables ||= {}
+        # Get class-level topic producers
+        def topics
+          @topics ||= {}
         end
 
         # Get class-level observers
@@ -120,14 +108,13 @@ module Takagi
         end
       end
 
-      def initialize(threads: nil, name: nil, interval: nil)
+      def initialize(threads: nil, name: nil)
         auto_inherit_from_controller unless self.class.config[:from_controller]
 
         class_config = self.class.config
         @config = {
           threads: threads || class_config[:threads] || 1,
-          name: name || class_config[:name] || default_reactor_name,
-          interval: interval || class_config[:interval] || 1.0
+          name: name || class_config[:name] || default_reactor_name
         }
 
         @thread_pool = Takagi::ThreadPool.new(size: @config[:threads], name: @config[:name])
@@ -135,14 +122,13 @@ module Takagi
         Takagi.logger.info "Reactor '#{@config[:name]}' created a #{@config[:threads]}-thread pool"
         Takagi.logger.debug "  Pool object_id: #{@thread_pool.object_id}"
 
-        @observables = {}
+        @topics = {}
         @observers = {}
         @running = false
-        @watcher = Observer::Watcher.new(interval: @config[:interval])
 
         Takagi.logger.debug "Reactor initialization complete: #{@config[:name]}"
 
-        # Register class-level observables and observers
+        # Register class-level topics and observers
         setup_class_definitions
       end
 
@@ -167,17 +153,13 @@ module Takagi
       # Generate default reactor name based on class name
       def default_reactor_name
         class_name = self.class.name&.split('::')&.last || 'reactor'
-        class_name.gsub(/Reactor$/, '').downcase + '-reactor'
+        "#{class_name.gsub(/Reactor$/, '').downcase}-reactor"
       end
 
       def setup_class_definitions
-        # Register class-level observables
-        self.class.observables.each do |path, definition|
-          if definition[:type] == :event_driven
-            observable(path, &definition[:block])
-          else
-            observable_polling(path, interval: definition[:interval], &definition[:block])
-          end
+        # Register class-level topics
+        self.class.topics.each do |path, block|
+          topic(path, &block)
         end
 
         # Register class-level observers
@@ -200,10 +182,6 @@ module Takagi
           @reactor_class.config[:name] = reactor_name
         end
 
-        def interval(seconds)
-          @reactor_class.config[:interval] = seconds
-        end
-
         def inherit_from(controller_class)
           @reactor_class.inherit_from(controller_class)
         end
@@ -211,82 +189,30 @@ module Takagi
 
       public
 
-      # Define an event-driven observable (push-based)
-      #
-      # The block receives an emitter that can push updates immediately
-      # when data changes, without relying on polling.
+      # Define a state-carrying topic. The block runs once with an emitter that wires
+      # pushes (a bus subscription, a sensor callback); the topic's representation is
+      # what observers are notified about.
       #
       # @param path [String] The resource path
-      # @yield [emitter] Block that sets up event listeners
-      # @return [void]
+      # @yield [emitter] Produces the initial representation
+      # @return [Takagi::Topic]
       #
       # @example Bus-driven
-      #   observable '/alerts' do |emitter|
+      #   topic '/alerts' do |emitter|
       #     emitter.on_event('alert.critical')
       #   end
-      #
-      # @example Custom events
-      #   observable '/temp' do |emitter|
-      #     TempSensor.on_change { |val| emitter.notify(val) }
-      #   end
-      def observable(path, &block)
-        emitter = Emitter.new(path)
-        @observables[path] = {
-          type: :event_driven,
-          emitter: emitter,
-          block: block
-        }
-
-        # Register with router so it can be requested
-        Takagi::Base.router.observable(path, &block)
-
-        # Initialize the observable in thread pool
-        schedule_in_pool do
-          block.call(emitter)
-        end
-
-        Takagi.logger.debug "Event-driven observable registered: #{path}"
+      def topic(path, &block)
+        @topics[path] = Takagi::Base.router.topic(path, &block)
+        Takagi.logger.debug "Topic registered: #{path}"
+        @topics[path]
       end
 
-      # Define a polling observable (interval-based)
+      # Manually publish a new value to a topic's observers (and make it the served
+      # representation). Falls back to a direct registry notification when the path is not
+      # a topic in this reactor.
       #
-      # The block is called periodically at the specified interval.
-      # Use this for checking remote resources or when event-driven isn't possible.
-      #
-      # @param path [String] The resource path
-      # @param interval [Float] Seconds between polls (default: reactor's interval)
-      # @yield Block that returns the current value
-      # @return [void]
-      #
-      # @example Polling remote resource
-      #   observable_polling '/external/status', interval: 5.0 do
-      #     check_external_api
-      #   end
-      def observable_polling(path, interval: @config[:interval], &block)
-        @observables[path] = {
-          type: :polling,
-          interval: interval,
-          block: block,
-          last_run: nil
-        }
-
-        # Register with router
-        Takagi::Base.router.observable(path, &block)
-
-        # Start polling loop in thread pool
-        schedule_in_pool do
-          poll_observable(path, interval, &block)
-        end
-
-        Takagi.logger.debug "Polling observable registered: #{path} (interval: #{interval}s)"
-      end
-
-      # Manually trigger a notification for an observable
-      #
-      # Useful for triggering updates from request handlers or other code.
-      #
-      # @param path [String] The observable path
-      # @param value [Object] The value to send
+      # @param path [String] The topic path
+      # @param value [Object] The value to publish
       # @return [void]
       #
       # @example In a controller action
@@ -295,6 +221,9 @@ module Takagi
       #     reactor.notify('/summary', calculate_summary)
       #   end
       def notify(path, value)
+        topic = @topics[path]
+        return topic.publish(value) if topic
+
         schedule_in_pool do
           Observer::Registry.notify(path, value)
         end
@@ -349,24 +278,23 @@ module Takagi
 
       # Start the reactor
       #
-      # Starts the thread pool and any background watchers.
+      # Starts the thread pool and declares no background notification work: notification
+      # is driven by state change, never by an interval (design D9).
       #
       # @return [void]
       def start
         return if @running
 
         @running = true
-        @watcher.start if has_polling_observables?
 
         Takagi.logger.info "Reactor '#{@config[:name]}' started with #{@config[:threads]} threads"
-        Takagi.logger.debug "  Event-driven observables: #{event_driven_count}"
-        Takagi.logger.debug "  Polling observables: #{polling_count}"
+        Takagi.logger.debug "  Topics: #{@topics.size}"
         Takagi.logger.debug "  Remote observers: #{@observers.size}"
       end
 
       # Stop the reactor
       #
-      # Gracefully shuts down the thread pool and watchers.
+      # Gracefully shuts down the thread pool.
       # Only shuts down thread pool if we own it (not shared).
       #
       # @return [void]
@@ -374,7 +302,6 @@ module Takagi
         return unless @running
 
         @running = false
-        @watcher.stop if @watcher
         @thread_pool.shutdown
         Takagi.logger.info "Reactor '#{@config[:name]}' stopped (thread pool shutdown)"
       end
@@ -399,33 +326,6 @@ module Takagi
           'another process (a pool thread does not survive a fork)'
         )
         block.call
-      end
-
-      def poll_observable(path, interval, &block)
-        loop do
-          break unless @running
-
-          begin
-            value = block.call
-            Observer::Registry.notify(path, value)
-          rescue StandardError => e
-            Takagi.logger.error "Polling observable #{path} error: #{e.message}"
-          end
-
-          sleep interval
-        end
-      end
-
-      def has_polling_observables?
-        @observables.any? { |_path, obs| obs[:type] == :polling }
-      end
-
-      def event_driven_count
-        @observables.count { |_path, obs| obs[:type] == :event_driven }
-      end
-
-      def polling_count
-        @observables.count { |_path, obs| obs[:type] == :polling }
       end
     end
   end

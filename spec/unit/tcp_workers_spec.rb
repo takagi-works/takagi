@@ -415,7 +415,9 @@ RSpec.describe 'Takagi TCP multi-worker server' do
   # What a worker did with one connection, read off the socket itself: a worker that
   # refuses closes the connection before it writes anything, so the client sees EOF, and
   # a served one has the server's CSM pending. MSG_PEEK reads without consuming, so a
-  # served socket stays correctly framed for its own real exchange afterwards.
+  # served socket stays correctly framed for its own real exchange afterwards. The EOF
+  # return of `recv_nonblock(..., exception: false)` is version-dependent: "" on Ruby
+  # <= 3.3 and nil on Ruby 3.4+, so both count as refused.
   def connection_outcome(socket, seconds: 5)
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds
     loop do
@@ -424,7 +426,7 @@ RSpec.describe 'Takagi TCP multi-worker server' do
       next unless socket.wait_readable(remaining)
 
       case socket.recv_nonblock(1, Socket::MSG_PEEK, exception: false)
-      when '' then return :refused
+      when nil, '' then return :refused
       when :wait_readable then next
       else return :served
       end

@@ -205,12 +205,12 @@ module Takagi
 
       def self.duplicate_observable(path)
         new(
-          "Observable already registered: #{path}",
+          "Topic already declared: #{path}",
           context: {
             path: path
           },
           suggestions: [
-            "Each path can only have one observable definition",
+            "Each path can only have one topic declaration",
             "Use different paths for different data streams",
             "Or use Bus.publish to send different events to same path"
           ]

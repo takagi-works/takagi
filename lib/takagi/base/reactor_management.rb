@@ -14,20 +14,12 @@ module Takagi
       #
       # @param threads [Integer] Number of threads for the reactor (default: 2)
       # @param name [String] Optional name for the reactor
-      # @param interval [Float] Default polling interval in seconds (default: 1.0)
       # @yield Block defining reactor configuration
       #
-      # @example Event-driven observable
+      # @example State-carrying topic
       #   reactor threads: 4 do
-      #     observable '/temperature' do |emitter|
+      #     topic '/temperature' do |emitter|
       #       emitter.on_event('sensor.temp.changed')
-      #     end
-      #   end
-      #
-      # @example Polling observable
-      #   reactor do
-      #     observable_polling '/status', interval: 5.0 do
-      #       { status: check_status, uptime: uptime }
       #     end
       #   end
       #
@@ -37,12 +29,11 @@ module Takagi
       #       process_temperature(data)
       #     end
       #   end
-      def reactor(threads: 2, name: nil, interval: 1.0, &block)
+      def reactor(threads: 2, name: nil, &block)
         reactor_name = name || "#{self.name.split('::').last.downcase}-reactor"
         reactor_instance = Takagi::Observable::Reactor.new(
           threads: threads,
-          name: reactor_name,
-          interval: interval
+          name: reactor_name
         )
         reactor_instance.instance_eval(&block)
 

@@ -15,6 +15,7 @@ module Takagi
     #   CoAPBridge.publish_to_observers('sensor.temp.room1', message)
     class CoAPBridge
       @registered_resources = Set.new
+      @apps = {}
       @mutex = Mutex.new
 
       class << self
@@ -41,15 +42,14 @@ module Takagi
         end
 
         # Register an observable CoAP resource (thread-safe)
-        # Creates a CoAP observable endpoint that reports the resource's existence.
-        # No state is retained or served: the local bus keeps none, so the endpoint
-        # returns a constant descriptor and a future state layer supplies values.
-        #
-        # This is an explicitly-invoked call. Nothing in the local bus - neither
-        # `publish` nor `consumer` - reaches into this bridge.
+        # Creates a CoAP topic endpoint for the address. Its declaration block runs once,
+        # producing a constant descriptor; the first `publish_to_observers` for the address
+        # makes the topic serve the latest event state - the state layer this bridge
+        # supplies. The local bus itself keeps no state and never reaches into the bridge
+        # on its own.
         #
         # @param address [String] Event address
-        # @param app [Class] Application class (must respond to #observable)
+        # @param app [Class] Application class (must respond to #topic)
         # @return [Boolean] True if registered, false if already exists
         #
         # @example
@@ -62,14 +62,13 @@ module Takagi
 
             # Mark as registered before creating resource
             @registered_resources << address
+            @apps[address] = app
 
             path = address_to_path(address)
 
             begin
-              # Create observable CoAP endpoint. The bus retains no state, so the
-              # endpoint reports the resource rather than a value; a future state
-              # layer will supply the value.
-              app.observable path do |_req|
+              # Create the CoAP topic endpoint; a future state layer supplies values.
+              app.topic path do
                 { address: address, status: 'observable', timestamp: Time.now.to_i }
               end
 
@@ -78,6 +77,7 @@ module Takagi
             rescue StandardError => e
               # If registration fails, remove from set
               @registered_resources.delete(address)
+              @apps.delete(address)
               Takagi.logger.error "Failed to register observable resource #{address}: #{e.message}"
               false
             end
@@ -104,9 +104,13 @@ module Takagi
             timestamp: message.timestamp.to_i
           }
 
-          # Notify via ObserveRegistry
-          # ObserveRegistry will send CoAP notifications to all observers
-          if defined?(Takagi::ObserveRegistry)
+          # Publish through the registered topic when one exists: it becomes the served
+          # representation and its observers are notified. Without a topic the bridge
+          # falls back to a direct registry notification.
+          topic = topic_for(path)
+          if topic
+            topic.publish(state)
+          elsif defined?(Takagi::ObserveRegistry)
             Takagi::ObserveRegistry.notify(path, state)
           else
             Takagi.logger.warn 'ObserveRegistry not available, cannot publish to observers'
@@ -139,6 +143,20 @@ module Takagi
           @mutex.synchronize { @registered_resources.include?(address) }
         end
 
+        # The topic this bridge registered for an address, through the app that owns it.
+        #
+        # @param address [String] Event address
+        # @return [Takagi::Topic, nil]
+        def topic_for(path)
+          app = @apps[path_to_address(path)]
+          return nil unless app
+
+          router = app.respond_to?(:router) ? app.router : nil
+          return nil unless router.respond_to?(:topic_for)
+
+          router.topic_for(path)
+        end
+
         # Get all registered resource addresses
         # @return [Array<String>]
         def registered_addresses
@@ -158,7 +176,9 @@ module Takagi
           @mutex.synchronize do
             # Set#delete? returns the set if element was present, nil if not
             # Convert to boolean: true if was present, false if not
-            !!@registered_resources.delete?(address)
+            removed = !!@registered_resources.delete?(address)
+            @apps.delete(address)
+            removed
           end
         end
 
@@ -166,6 +186,7 @@ module Takagi
         def clear
           @mutex.synchronize do
             @registered_resources.clear
+            @apps.clear
           end
         end
       end

@@ -29,8 +29,8 @@ module Takagi
     def self.fetch: (String path, ?metadata: Hash[Symbol, untyped]) { (Message::Inbound, Hash[Symbol, String]) -> untyped } -> void
     def self.ipatch: (String path, ?metadata: Hash[Symbol, untyped]) { (Message::Inbound, Hash[Symbol, String]) -> untyped } -> void
 
-    # Observable route registration
-    def self.observable: (String path, ?metadata: Hash[Symbol, untyped]) { (Message::Inbound, Hash[Symbol, String]) -> untyped } -> void
+    # Topic resource registration
+    def self.topic: (String path, ?metadata: Hash[Symbol, untyped]) { (Message::Inbound, Hash[Symbol, String]) -> untyped } -> Topic
 
     # Get the full mount path
     def self.mount_path: () -> String?

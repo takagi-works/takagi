@@ -108,7 +108,7 @@ module Takagi
           each do |name, reactor|
             result[name] = {
               running: reactor.running?,
-              observables: reactor.observables.size,
+              topics: reactor.topics.size,
               observers: reactor.observers.size,
               threads: reactor.config[:threads],
               thread_pool_stats: reactor.thread_pool.current_stats

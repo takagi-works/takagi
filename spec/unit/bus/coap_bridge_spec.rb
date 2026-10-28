@@ -6,14 +6,14 @@ require 'timeout'
 RSpec.describe Takagi::Bus::CoAPBridge do
   let(:app) do
     Class.new do
-      attr_reader :observables
+      attr_reader :topics
 
       def initialize
-        @observables = {}
+        @topics = {}
       end
 
-      def observable(path, &block)
-        @observables[path] = block
+      def topic(path, &block)
+        @topics[path] = block
       end
     end.new
   end
@@ -72,7 +72,7 @@ RSpec.describe Takagi::Bus::CoAPBridge do
 
       expect(result).to be true
       expect(described_class.registered?('sensor.temp.room1')).to be true
-      expect(app.observables.keys).to eq(['/events/sensor/temp/room1'])
+      expect(app.topics.keys).to eq(['/events/sensor/temp/room1'])
     end
 
     it 'returns false and keeps the first registration on a repeat call' do
@@ -85,7 +85,7 @@ RSpec.describe Takagi::Bus::CoAPBridge do
 
     it 'serves a constant descriptor rather than bus state' do
       described_class.register_observable_resource('sensor.temp.room1', app)
-      representation = app.observables.fetch('/events/sensor/temp/room1').call(nil)
+      representation = app.topics.fetch('/events/sensor/temp/room1').call(nil)
 
       expect(representation).to include(address: 'sensor.temp.room1', status: 'observable')
       expect(representation[:timestamp]).to be_a(Integer)
@@ -95,14 +95,14 @@ RSpec.describe Takagi::Bus::CoAPBridge do
       described_class.register_observable_resource('sensor.temp.room1', app)
       Takagi.bus.publish('sensor.temp.room1', { value: 25.5 })
 
-      representation = app.observables.fetch('/events/sensor/temp/room1').call(nil)
+      representation = app.topics.fetch('/events/sensor/temp/room1').call(nil)
 
       expect(representation).to include(address: 'sensor.temp.room1', status: 'observable')
       expect(representation[:body]).to be_nil
     end
 
     it 'returns false and unregisters when the app rejects the resource' do
-      allow(app).to receive(:observable).and_raise(StandardError, 'no observable support')
+      allow(app).to receive(:topic).and_raise(StandardError, 'no topic support')
 
       result = described_class.register_observable_resource('sensor.temp.room1', app)
 
@@ -243,6 +243,28 @@ RSpec.describe Takagi::Bus::CoAPBridge do
       )
 
       described_class.publish_to_observers('sensor.temp.room1', message)
+    end
+
+    it 'publishes through the registered topic, which then serves the latest state' do
+      real_app = Class.new do
+        attr_reader :router
+
+        def initialize
+          @router = Takagi::Router.new
+        end
+
+        def topic(path, metadata: {}, &block)
+          @router.topic(path, metadata: metadata, &block)
+        end
+      end.new
+
+      described_class.register_observable_resource('sensor.temp.room1', real_app)
+      message = Takagi::Bus::Message.new('sensor.temp.room1', { value: 25.5 })
+
+      described_class.publish_to_observers('sensor.temp.room1', message)
+      state = real_app.router.topic_for('/events/sensor/temp/room1').current_value
+
+      expect(state).to include(address: 'sensor.temp.room1', body: { value: 25.5 })
     end
 
     it 'logs and swallows a notification failure without touching bus state' do

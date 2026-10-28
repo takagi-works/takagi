@@ -9,11 +9,13 @@ RSpec.describe 'Takagi RFC 6690 Resource Discovery' do
     if defined?(Takagi::Bus::CoAPBridge)
       Takagi::Bus::CoAPBridge.clear
 
-      # Also remove the routes from the global router that were added by CoAPBridge
+      # Also remove the routes and topics from the global router that were added by CoAPBridge
       router = Takagi::Base.router
       router.instance_variable_get(:@routes_mutex).synchronize do
         routes_hash = router.instance_variable_get(:@routes)
-        routes_hash.delete_if { |key, _| key.start_with?('OBSERVE /events/') }
+        routes_hash.delete_if { |key, _| key.start_with?('GET /events/') }
+        topics_hash = router.instance_variable_get(:@topics)
+        topics_hash.delete_if { |path, _| path.start_with?('/events/') }
       end
     end
 
@@ -30,11 +32,11 @@ RSpec.describe 'Takagi RFC 6690 Resource Discovery' do
       title 'Temperature'
     end
 
-    Takagi::Base.observable '/spec-alerts' do
+    Takagi::Base.topic '/spec-alerts' do
       { alert: true }
     end
 
-    Takagi::Base.core '/spec-alerts', method: :observe do
+    Takagi::Base.core '/spec-alerts', method: :get do
       title 'Alerts'
       rt 'sensor.alert'
     end

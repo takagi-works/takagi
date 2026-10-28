@@ -37,8 +37,8 @@ module Takagi
     # The controller that holds routes registered directly on the application
     def self.root_controller: () -> singleton(Controller)
 
-    # Registers an observable route directly on the application
-    def self.observable: (String path, ?metadata: Hash[Symbol, untyped]) { (untyped, untyped) -> untyped } -> void
+    # Registers a state-carrying topic resource directly on the application
+    def self.topic: (String path, ?metadata: Hash[Symbol, untyped]) { (untyped, untyped) -> untyped } -> Topic
 
     # Configure the application
     def self.configure: () { (ConfigContext) -> void } -> void

@@ -2,6 +2,7 @@
 
 require 'digest'
 require_relative '../coap/block_wise'
+require_relative '../pub_sub/coap_observe'
 
 module Takagi
   module Observer
@@ -36,48 +37,66 @@ module Takagi
       # transfer (see {#notification}). Errors are logged, never raised: one unreachable
       # subscriber must not stop the other notifications.
       #
+      # Sends one notification to a subscriber, recording the message id so a Reset in
+      # reply (RFC 7641 §4.5) can identify the entry.
+      #
       # @param subscriber [Hash] subscription entry with `:address`, `:port`, `:token`
-      #   and an optional `:transport`
+      #   and an optional `:transport`/`:content_format`
       # @param value [Object] value to notify; stringified for the wire
-      # @return [void]
-      def send_packet(subscriber, value)
-        # Get transport from subscriber metadata, or use instance default
+      # @param code [String] the notification's CoAP response code
+      # @param observe [Integer, nil] sequence value for the Observe option
+      # @return [Takagi::Message::Outbound, nil] the sent message, or nil on error
+      def send_packet(subscriber, value, code: '2.05 Content', observe: nil)
         transport = subscriber[:transport] || @transport
-
-        @sender.transmit(notification(subscriber, value, transport), subscriber[:address], subscriber[:port])
+        message = notification(subscriber, value, transport, code: code, observe: observe)
+        @sender.transmit(message, subscriber[:address], subscriber[:port])
+        message
       rescue StandardError => e
         Takagi.logger.error "Observer Notify Error: #{e.message}"
+        nil
       end
 
-      # Builds the CoAP notification message for one subscriber value.
+      # Builds the CoAP notification message for one subscriber value. A 2.xx notification
+      # carries the Observe option when `observe:` is given and echoes the subscriber's
+      # Content-Format; a non-2.xx notification (an ended observation) carries no Observe
+      # option (RFC 7641 §4.2). The message type derives from the pub/sub binding for the
+      # underlying transport (NON by default, none over a reliable transport).
       #
-      # The value is sliced with {Takagi::CoAP::BlockWise.slice} — the engine
-      # {Takagi::Middleware::BlockWise} slices responses with — when it exceeds one
-      # block. Per RFC 7959 §3.4 a notification carries just the first block, with a
-      # Block2 option (NUM 0, M 1), the Size2 of the whole representation and an ETag
-      # over it; the observer fetches the remaining blocks with further requests. A
-      # value that fits one block is sent unchanged, with no Block2 option.
-      #
-      # @param subscriber [Hash] subscription entry with `:token`
+      # @param subscriber [Hash] subscription entry with `:token`, `:content_format`
       # @param value [Object] value to notify; stringified for the wire
       # @param transport [Symbol] transport the notification travels over
+      # @param code [String] the notification's CoAP response code
+      # @param observe [Integer, nil] sequence value for the Observe option
       # @return [Takagi::Message::Outbound]
-      def notification(subscriber, value, transport)
+      def notification(subscriber, value, transport = @transport, code: '2.05 Content', observe: nil)
         payload = value.to_s.b
         block = first_block(payload)
+        options = {}
+        options.merge!(block_options(block, payload)) if block
+        options[CoAP::Registries::Option::CONTENT_FORMAT] = [subscriber[:content_format]] if subscriber[:content_format]
+        options[CoAP::Registries::Option::OBSERVE] = [observe] if observe && code.to_s.start_with?('2.')
 
         Takagi::Message::Outbound.new(
-          code: '2.05',
+          code: code,
           payload: block ? block.payload : payload,
           token: subscriber[:token],
           message_id: rand(0..0xFFFF),
-          type: 1, # NON
+          type: notification_type(transport),
           transport: transport,
-          options: block ? block_options(block, payload) : {}
+          options: options
         )
       end
 
       private
+
+      # The CoAP message type of a notification for a transport, per the binding's
+      # declaration: NON by default, none over a reliable transport (RFC 8323 §3).
+      #
+      # @param transport [Symbol]
+      # @return [Integer, nil]
+      def notification_type(transport)
+        PubSub::CoapObserve.for(transport || :udp).notification_type
+      end
 
       # The first block of a representation that does not fit one datagram, or nil when
       # block-wise transfer is disabled or the value fits one block.

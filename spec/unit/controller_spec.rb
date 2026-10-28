@@ -62,16 +62,17 @@ RSpec.describe Takagi::Controller do
       expect(routes).to include('POST /data')
     end
 
-    it 'supports observable routes' do
+    it 'supports topic routes' do
       class TestController < Takagi::Controller
-        observable '/events' do
+        topic '/events' do
           { event: 'test' }
         end
       end
 
-      entry = TestController.router.find_observable('/events')
-      expect(entry).not_to be_nil
-      expect(entry.method).to eq('OBSERVE')
+      topic = TestController.router.topic_for('/events')
+      expect(topic).not_to be_nil
+      expect(topic.current_value).to eq(event: 'test')
+      expect(TestController.router.all_routes).to include('GET /events')
     end
 
     it 'routes are isolated between controllers' do
