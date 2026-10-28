@@ -201,17 +201,11 @@ publishing rich metadata.
 require 'takagi'
 
 class SensorAPI < Takagi::Base
+  topic "/sensors/temp", metadata: { rt: 'sensor.temp.streaming' } do
+    { temp: 42.0, unit: 'celsius' }   # initial representation, produced once at boot
+  end
+
   reactor do
-    # observable: Server-side - make a resource observable by clients
-    observable "/sensors/temp" do
-      core do
-        title 'Temperature Stream'
-        rt 'sensor.temp.streaming'
-      end
-
-      json temp: 42.0, unit: 'celsius'
-    end
-
     # observe: Client-side - subscribe to remote observable resources
     observe "coap://temp_server/temp" do |request, params|
       Takagi.logger.info "Remote temperature update: #{params.inspect}"
@@ -224,7 +218,8 @@ SensorAPI.run!
 🔥 **Takagi is Observe (RFC 7641) enabled**
 
 **Important distinction:**
-- **`observable`** - Server-side: Makes your resource observable by clients
+- **`topic`** - Server-side: a state-carrying resource; a plain GET reads its current
+  representation, a GET with `Observe: 0` registers the client
 - **`observe`** - Client-side: Subscribe to remote observable resources
 
 ---
@@ -434,19 +429,19 @@ class MyAPI < Takagi::Base
 end
 ```
 
-### **Observable Resources**
+### **Topics (state-carrying resources)**
 
-Make resources observable by clients using the `observable` method:
+Offer a state-carrying resource to clients using the `topic` method. The declaration block
+runs **once**, producing the initial representation; later reads serve that state and
+publishing a new value is what observers are notified about:
 
 ```ruby
 class MyAPI < Takagi::Base
-  reactor do
-    # Server-side: Offer an observable resource
-    observable '/sensor/temp' do
-      core { rt 'sensor.temperature'; obs true }
-      json temperature: read_sensor, unit: 'celsius'
-    end
+  topic '/sensor/temp', metadata: { rt: 'sensor.temperature', obs: true } do
+    { temperature: read_sensor, unit: 'celsius' }
+  end
 
+  reactor do
     # Client-side: Subscribe to a remote observable
     observe 'coap://remote-server/sensor' do |request, params|
       Takagi.logger.info "Received: #{params.inspect}"
@@ -456,7 +451,8 @@ end
 ```
 
 **Note:**
-- `observable` = Server-side (offer observations to clients)
+- `topic` = Server-side: declares the resource and its current representation; a plain
+  GET reads it, a GET with `Observe: 0` subscribes the client (RFC 7641)
 - `observe` = Client-side (subscribe to remote resources)
 
 ---

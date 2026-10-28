@@ -126,7 +126,23 @@ four keys have a live consumer in `lib/`.
 These keys are read from YAML or the programmatic API. The matching `EVENTBUS_*` environment names
 are not consulted while a value is present in the config, so they have no effect today.
 
-### Removed keys are refused, not ignored
+## Observe notification rules (RFC 7641)
+
+Topics notify observers on the wire with fixed rules - there are no keys to turn them off or
+retune:
+
+- Every `2.xx` notification carries an **Observe option** whose value is the low 24 bits of the
+topic's strictly increasing sequence, greater than any preceding notification for that
+registration, and refreshed on retransmission. A **non-`2.xx`** notification (an ended
+observation) carries **no** Observe option.
+- Notifications echo the **registering token** and the **initial Content-Format**.
+- The message type is **NON by default**, **CON** where a liveness check applies, and absent over
+a reliable transport (RFC 8323 §3).
+- The observer list is **durable within one process only**: a notification reaches an observer
+from the process that holds its entry, and a forked worker never inherits another process's
+observations. See [Known limits](guide/known-limits.md#observe-notifications-rfc-7641).
+
+## Removed keys are refused, not ignored
 
 Keys whose feature was taken out of the bus now fail the load with an `ArgumentError` naming the key
 and the reason. Writing one is an error, not a silent no-op:

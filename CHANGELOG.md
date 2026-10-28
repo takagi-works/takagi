@@ -164,9 +164,10 @@ In particular — and this is the part the original draft got wrong:
 - `client.on(event, &cb)` **still works** — it's now defined on
   `ClientBase#on` instead of `Client#on`, but `Client < ClientBase`
   and `Forwardable` re-delegates it, so the call site is unchanged.
-- `App.observable(path, metadata:, &block)` and
-  `App.core(path, method:, &block)` are **new additive** methods;
-  they coexist with the route DSL, not replace it.
+- `App.topic(path, metadata:, &block)` and
+  `App.core(path, method:, &block)` declare resources; the former is
+  the state-carrying topic (`observable` was renamed to it), the latter
+  sets CoRE metadata on an existing route.
 - `App.boot!`, `App.run!`, `App.plugin`, `App.enable_plugins!`,
   `App.use`, `App.middleware_stack`, `App.reactor`,
   `App.use_reactor` all still exist — they're now in
@@ -236,8 +237,9 @@ In particular — and this is the part the original draft got wrong:
 - `Takagi::Network::UdpSender` is a singleton; the UDP socket is
   shared safely across worker threads (read) and the response path
   (write) without contention.
-- `Takagi::Observer::Watcher` drives `Takagi::ObserveRegistry`
-  re-notification and is started/stopped by the lifecycle hooks.
+- `Takagi::Observer::Watcher` is the boot surface the lifecycle starts;
+  notification itself is state-driven (`Takagi::Topic#publish`), never
+  interval-driven (design D9).
 
 ### Migration cheatsheet (1.x → 2.0)
 
@@ -253,7 +255,7 @@ Optional upgrades worth making (additive, not required):
 | 1.x style | 2.0 style |
 |---|---|
 | `App.get('/foo') { ... }` (still works) | leave as-is, or use `App.core('/foo', method: :get) { ... }` for explicit CoRE metadata |
-| `App.observable('/foo') { ... }` (didn't exist) | same call, now supported for Observe resources |
+| `App.observable('/foo') { ... }` | **renamed**: `App.topic('/foo') { ... }` — a state-carrying resource; its block runs once, producing the initial representation, and publishing a new value is what observers are notified about (`observe` remains the client-side subscription, and the CoRE `obs` link-format attribute alias is untouched) |
 | (no plugin system) | `App.plugin :sinatra` / `App.plugin :devtools` |
 | (no reactor) | `App.reactor(:sensor_poller, interval: 30) { ... }` |
 | `App.use(SomeMiddleware)` (still works) | prefer a Plugin (extracted lifecycle) when possible |
